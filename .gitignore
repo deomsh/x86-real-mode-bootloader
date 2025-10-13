@@ -1,0 +1,9 @@
+*.o
+*.elf
+*.sys
+*.img
+*.raw
+*.log
+*.map
+boot
+*.qcow2
