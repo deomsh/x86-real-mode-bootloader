@@ -11,7 +11,7 @@ boot.qcow2: boot.img
 boot.img: boot io.sys
 	dd if=/dev/zero of=$@ bs=20M count=1
 	mformat -i $@ -B boot ::
-	mcopy -i $@ boot.c io.c io.sys boot.ld ::
+	mcopy -i $@ -w boot.c io.c io.sys boot.ld ::
 
 boot: boot.elf
 	$(OBJCOPY) -O binary boot.elf boot
@@ -51,3 +51,10 @@ dostest.img: boot
 	dd if=/dev/zero of=$@ bs=20M count=1
 	mformat -i $@ -B boot ::
 	mcopy -i $@ -s ./dos622/* ::
+
+blahblah: boot
+	echo "Hello, world!"
+
+print_at.bin: print_at.asm boot.img
+	nasm -f bin print_at.asm -o print_at.bin
+	mcopy -i boot.img print_at.bin ::IO.SYS

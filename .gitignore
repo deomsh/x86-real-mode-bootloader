@@ -21,3 +21,4 @@ wheels/
 
 # Virtual environments
 .venv
+*.bin
