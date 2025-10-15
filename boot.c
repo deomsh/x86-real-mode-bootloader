@@ -212,7 +212,7 @@ __attribute__((noreturn)) void boot()
     // print_u32(root_dir_sector);
     // puts("\r\n");
 
-    // NOTE: We are kind of assuming that the sector size is 512
+    // NOTE: We are assuming that the sector size is 512
     // Root directory size in sectors:
     uint32_t root_dir_size = ((boot_sector->root_entries * 32) +
                               (boot_sector->bytes_per_sector - 1)) /
@@ -229,12 +229,11 @@ __attribute__((noreturn)) void boot()
             fat_dir_entry_t* entry = (fat_dir_entry_t*)(buf + j * sizeof(fat_dir_entry_t));
             //puts(entry->filename);
             if(memcmp(entry->filename, "IO      SYS", 8 + 3) == 0) {
-                //puts("YES!");
                 //putchar('Y');
                 root_dir_sector += root_dir_size;
                 root_dir_sector += (entry->first_cluster_low - 2) * boot_sector->sectors_per_cluster;
                 read_sectors_lba(root_dir_sector, 3, buf);
-                dump(buf);
+                //dump(buf);
                 //printhex(buf[0]);
                 //printhex(buf[1]);
                 asm ("jmpw %0, %1" : : "g"(0x0000), "g"(0x0700));

@@ -1,5 +1,7 @@
 # x86 real mode bootloader
 
+![](.github/screenshot.png)
+
 This is a bootloader for x86 real mode, written using [`gcc-ia16`](https://github.com/tkchia/gcc-ia16).
 
 The bootloader parses the FAT16 filesystem, searches the root directory for `IO.SYS`, loads it at address 0x0700, and transfers control to it. If `IO.SYS` is not found, it prints "N" and halts.
@@ -11,6 +13,33 @@ There are various similar project out there, my contributions:
 - This project was fully created in a [Devcontainer](https://containers.dev/), giving you an easy-to-reproduce environment.
 - The produced image is also valid FAT16, which means you don't need an MBR to boot it.
 - Working gdb setup scripts for use with qemu to debug your bootloader.
+
+## Setting up the environment
+
+This repository uses a [`devcontainer.json`](./.devcontainer/devcontainer.json) file to allow you to quickly get started.
+
+### GitHub Codespaces
+
+1. [Fork this repository](https://github.com/mrexodia/x86-real-mode-bootloader/fork)
+2. Click the green `<> Code` button
+3. Press `Codespaces`
+4. Press `Create codespace on master`
+6. Wait a minutes while the image is loading ☕
+   - Press `Show log` to see progress
+   - Reload the page if it appears stuck
+   - **If Firefox does not work, try Chrome!**
+
+![](.github/codespace.png)
+
+### Visual Studio Code + Docker
+
+Alternatively you can install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and use the Visual Studio Code [Dev Containers](https://code.visualstudio.com/docs/devcontainers/tutorial) extension to run the project.
+
+**Note**: You need to disable git's `core.autocrlf` option for this to work:
+
+```sh
+git config --global core.crlf false
+```
 
 ## Project Structure
 
