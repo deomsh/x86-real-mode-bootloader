@@ -16,4 +16,6 @@ RUN DEBIAN_FRONTEND=noninteractive apt update && \
     git \
     gdb \
     nasm \
+    hyx \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*

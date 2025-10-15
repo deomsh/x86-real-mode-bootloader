@@ -37,7 +37,10 @@ static void dump(uint8_t *buf, uint16_t size)
 
 __attribute__((noreturn, section(".text.start"))) void _start()
 {
-    puts("Hello from IO.SYS!\r\n");
+    puts("Hoi paps!\r\n");
+    printhex(0xAB);
+    putchar('\r');
+    putchar('\n');
     dump((uint8_t*)0x0700, 512);
     while(1);
 }
