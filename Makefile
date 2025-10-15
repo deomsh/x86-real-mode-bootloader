@@ -13,7 +13,7 @@ all: $(disk)
 boot.img: boot io.sys
 	dd if=/dev/zero of=$@ bs=20M count=1
 	mformat -i $@ -B boot ::
-	mcopy -i $@ boot.c gdb-boot.txt io.c io.sys boot.ld ::
+	mcopy -i $@ boot.c io.c io.sys boot.ld ::
 
 boot: boot.elf
 	$(OBJCOPY) -O binary $< $@

@@ -1,7 +1,7 @@
 {
 	"name": "x86-boot-sector-c",
-	// docker build -t ghcr.io/mrexodia/x86-real-mode-bootloader .
-	// docker push ghcr.io/mrexodia/x86-real-mode-bootloader
+	// docker buildx build --platform linux/amd64 -t ghcr.io/mrexodia/x86-real-mode-bootloader:latest .
+	// docker push ghcr.io/mrexodia/x86-real-mode-bootloader:latest
 	"image": "ghcr.io/mrexodia/x86-real-mode-bootloader:latest",
 	"runArgs": ["--platform=linux/amd64"], // Support Rosetta
 	"postCreateCommand": "echo 'Dev container ready. Use make run to test with QEMU'"
