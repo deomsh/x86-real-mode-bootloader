@@ -3,32 +3,39 @@ LD = ia16-elf-ld
 OBJCOPY = ia16-elf-objcopy
 CFLAGS = -ffreestanding -nostdlib -O1 -Wall
 
-all: boot.qcow2
+all: oemd7f16.bin
+;all: boot.qcow2
 
-boot.qcow2: boot.img
-	qemu-img convert -f raw -O qcow2 boot.img boot.qcow2
+;boot.qcow2: boot.img
+;	qemu-img convert -f raw -O qcow2 boot.img boot.qcow2
 
-boot.img: boot io.sys
-	dd if=/dev/zero of=$@ bs=20M count=1
-	mformat -i $@ -B boot ::
-	mcopy -i $@ -w boot.c io.c io.sys boot.ld ::
+;boot.img: boot io.sys
+;	dd if=/dev/zero of=$@ bs=20M count=1
+;	mformat -i $@ -B boot ::
+;	mcopy -i $@ -w boot.c io.c io.sys boot.ld ::
 
-boot: boot.elf
-	$(OBJCOPY) -O binary boot.elf boot
+oemd7f16.bin: oemd7f16.elf
+	$(OBJCOPY) -O binary oemd7f16.elf oemd7f16.bin
 
-boot.elf: boot.o
-	$(LD) --no-warn-rwx-segments --Map=boot.map -T boot.ld -o boot.elf boot.o
+oemd7f16.elf: oemd7f16.asm
+	nasm -f bin oemd7f16.elf oemd7f16.bin
 
-boot.o: boot.c
-	$(CC) $(CFLAGS) -c -o boot.o boot.c
+;boot: boot.elf
+;	$(OBJCOPY) -O binary boot.elf boot
 
-io.sys: io.elf
+;boot.elf: boot.o
+;	$(LD) --no-warn-rwx-segments --Map=boot.map -T boot.ld -o boot.elf boot.o
+
+;boot.o: boot.c
+;	$(CC) $(CFLAGS) -c -o boot.o boot.c
+
+;io.sys: io.elf
 	$(OBJCOPY) -O binary io.elf io.sys
 
-io.elf: io.o
+;io.elf: io.o
 	$(LD) --no-warn-rwx-segments --Map=io.map -T io.ld -o io.elf io.o
 
-io.o: io.c
+;io.o: io.c
 	$(CC) $(CFLAGS) -c -o io.o io.c
 
 .PHONY: all clean run debug
@@ -36,25 +43,29 @@ io.o: io.c
 rebuild: clean all
 
 clean:
-	rm -f *.o *.elf *.map io.sys boot.qcow2 boot.img boot
+	rm -f *.asm *.elf *.map *.bin
 
-run: boot.img
-	qemu-system-i386 -drive format=raw,file=boot.img -nographic -no-reboot
+;clean:
+;	rm -f *.o *.elf *.map io.sys boot.qcow2 boot.img boot
 
-debug: boot.img
-	qemu-system-i386 -drive format=raw,file=boot.img -nographic -s -S
+;run: boot.img
+;	qemu-system-i386 -drive format=raw,file=boot.img -nographic -no-reboot
 
-disasm: boot.elf
-	ia16-elf-objdump -d boot.elf -M i8086,intel
+;debug: boot.img
+;	qemu-system-i386 -drive format=raw,file=boot.img -nographic -s -S
 
-dostest.img: boot
-	dd if=/dev/zero of=$@ bs=20M count=1
-	mformat -i $@ -B boot ::
-	mcopy -i $@ -s ./dos622/* ::
+;disasm: boot.elf
+;	ia16-elf-objdump -d boot.elf -M i8086,intel
 
-blahblah: boot
-	echo "Hello, world!"
+;dostest.img: boot
+;	dd if=/dev/zero of=$@ bs=20M count=1
+;	mformat -i $@ -B boot ::
+;	mcopy -i $@ -s ./dos622/* ::
 
-print_at.bin: print_at.asm boot.img
-	nasm -f bin print_at.asm -o print_at.bin
-	mcopy -i boot.img print_at.bin ::IO.SYS
+;blahblah: boot
+;	echo "Hello, world!"
+
+;print_at.bin: print_at.asm boot.img
+;	nasm -f bin print_at.asm -o print_at.bin
+;	mcopy -i boot.img print_at.bin ::IO.SYS
+
