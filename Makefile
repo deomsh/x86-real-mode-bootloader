@@ -59,10 +59,16 @@ print_at.bin: print_at.asm boot.img
 	nasm -f bin print_at.asm -o print_at.bin
 	mcopy -i boot.img print_at.bin ::IO.SYS
 
-oemdos40: oemdos40.bin
-	nasm -f bin oemdos40.asm -o oemdos40.bin
+# not fully good
 
-oemdos70: oemdos70.bin
-	nasm -f bin oemdos70.asm -o oemdos70.bin
+oemd4f12.bin: oemd4f12.asm oemd4f12.bin
+	nasm -f bin oemd4f12.asm -o oemd4f12.bin
 
+oemd7f12.bin: oemd7f12.asm oemd7f12.bin
+	nasm -f bin oemd7f12.asm -o oemd7f12.bin
 
+oemd4f16.bin: oemd4f16.asm oemd4f16.bin
+	nasm -f bin oemd4f16.asm -o oemd4f16.bin
+
+oemd7f16.bin: oemd7f16.asm oemd7f16.bin
+	nasm -f bin oemd7f16.asm -o oemd7f16.bin
