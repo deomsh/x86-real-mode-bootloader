@@ -60,9 +60,9 @@ print_at.bin: print_at.asm boot.img
 	mcopy -i boot.img print_at.bin ::IO.SYS
 
 oemdos40: oemdos40.bin
-	nasm -f bin oemdos40.asm
+	nasm -f bin oemdos40.asm -o oemdos40.bin
 
 oemdos70: oemdos70.bin
-	nasm -f bin oemdos70.asm
+	nasm -f bin oemdos70.asm -o oemdos70.bin
 
 
