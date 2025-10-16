@@ -62,3 +62,7 @@ print_at.bin: print_at.asm boot.img
 oemd4f12.bin: oemd4f12
 	nasm -f bin oemd4f12.asm
 
+oemd4f16.bin: oemd4f16
+	nasm -f bin oemd4f16.asm
+
+
