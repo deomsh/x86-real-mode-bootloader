@@ -62,13 +62,17 @@ print_at.bin: print_at.asm boot.img
 # not fully good
 
 oemd4f12.bin: oemd4f12.asm
+magic.mac
 	nasm -f bin oemd4f12.asm -o oemd4f12.bin
 
 oemd7f12.bin: oemd7f12.asm
+magic.mac
 	nasm -f bin oemd7f12.asm -o oemd7f12.bin
 
 oemd4f16.bin: oemd4f16.asm
+magic.mac
 	nasm -f bin oemd4f16.asm -o oemd4f16.bin
 
 oemd7f16.bin: oemd7f16.asm
+magic.mac
 	nasm -f bin oemd7f16.asm -o oemd7f16.bin
