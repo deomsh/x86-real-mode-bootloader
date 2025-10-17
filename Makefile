@@ -59,20 +59,16 @@ print_at.bin: print_at.asm boot.img
 	nasm -f bin print_at.asm -o print_at.bin
 	mcopy -i boot.img print_at.bin ::IO.SYS
 
-# not fully good
+# Test3
 
-oemd4f12.bin: oemd4f12.asm
-magic.mac
-	nasm -f bin oemd4f12.asm -o oemd4f12.bin
+oemd4f12.bin: oemd4f12.asm magic.mac  # or just magic.mac if oemd4f12.asm doesn't directly depend on it
+	nasm -f bin -i magic.mac oemd4f12.asm -o oemd4f12.bin   # Example: -i for include path
 
-oemd7f12.bin: oemd7f12.asm
-magic.mac
-	nasm -f bin oemd7f12.asm -o oemd7f12.bin
+oemd7f12.bin: oemd7f12.asm magic.mac
+	nasm -f bin -i magic.mac oemd7f12.asm -o oemd7f12.bin
 
-oemd4f16.bin: oemd4f16.asm
-magic.mac
-	nasm -f bin oemd4f16.asm -o oemd4f16.bin
+oemd4f16.bin: oemd4f16.asm magic.mac
+	nasm -f bin -i magic.mac oemd4f16.asm -o oemd4f16.bin
 
-oemd7f16.bin: oemd7f16.asm
-magic.mac
-	nasm -f bin oemd7f16.asm -o oemd7f16.bin
+oemd7f16.bin: oemd7f16.asm magic.mac
+	nasm -f bin -i magic.mac oemd7f16.asm -o oemd7f16.bin
