@@ -146,7 +146,9 @@ segment	.text
 %define LOADEND         0x07b0          ; limit reads to below this segment
                                         ; LOADSEG+29KB, else data overwritten
 
-%define FATBUF          bp-0x7500       ; offset of temporary buffer for FAT
+%define FATBUF          0xE400          ; segment to load temporary buffer for FAT
+                                        ; chain 0:FATBUF = 0:0700 = LOADSEG:0
+;%define FATBUF          bp-0x7500       ; offset of temporary buffer for FAT
                                         ; chain 0:FATBUF = 0:0700 = LOADSEG:0
 %define ROOTDIR         0x7C00-0x7700   ; offset to buffer for root directory
                                         ; entry of kernel 0:ROOTDIR
