@@ -85,5 +85,6 @@ fat12b.bin: fat12b.nasm
 fat16m.bin: fat16m.nasm
 	nasm -f bin fat16m.nasm -o fat16m.bin
 
-msdos40.bin: msdos40.nasm
-	nasm -f bin msdos40.nasm -o msdos40.bin
+## Errors: MSBOOT.BIN can not be compiled with nasm!
+#MSBOOT.BIN: MSBOOT.ASM
+#	nasm -f bin MSBOOT.ASM -o MSBOOT.BIN
