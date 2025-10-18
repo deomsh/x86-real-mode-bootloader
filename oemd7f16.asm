@@ -126,10 +126,10 @@ CPU 8086  ; enable assembler warnings to limit instruction set
 ;%define ISFAT12         1              ; only 1 of these should be set,
 %define ISFAT16         1              ; defines which FAT is supported
 
-%define TRYLBAREAD       1              ; undefine to use only CHS int 13h
-%define SETROOTDIR       1              ; if defined dir entry copied to 0:500
-%define LOOPONERR        1              ; if defined on error simply loop forever
-;%define RETRYALWAYS     1              ; if defined retries read forever
+%define TRYLBAREAD      1              ; undefine to use only CHS int 13h
+%define SETROOTDIR      1              ; if defined dir entry copied to 0:500
+%define LOOPONERR       1              ; if defined on error simply loop forever
+%define RETRYALWAYS     1              ; if defined retries read forever
 %define WINBOOT         1              ; use win9x kernel calling conventions (name & jmp addr)
 %define MSCOMPAT        1              ; sets default filename to MSDOS IO.SYS
 
@@ -147,15 +147,14 @@ segment	.text
                                         ; LOADSEG+29KB, else data overwritten
 
 ;%define FATBUF          0xE400          ; BAD:  segment to load temporary buffer for FAT
- 
-%define FATBUF          bp-0x7700       ; switch offset of temporary buffer for FAT
-
-;%define FATBUF          bp-0x7500       ; offset of temporary buffer for FAT
+;%define FATBUF          bp-0x7700       ; BAD: switch offset of temporary buffer for FAT
+%define FATBUF          bp-0x7500       ; offset of temporary buffer for FAT
                                         ; chain 0:FATBUF = 0:0700 = LOADSEG:0
-%define ROOTDIR         0x7C00-0x7500   ; switch offset to buffer for root directory
 
-;%define ROOTDIR         0x7C00-0x7700   ; offset to buffer for root directory
+;%define ROOTDIR         0x7C00-0x7500   ; BAD: switch offset to buffer for root directory
+%define ROOTDIR         0x7C00-0x7700   ; offset to buffer for root directory
                                         ; entry of kernel 0:ROOTDIR
+
 %define CLUSTLIST       bp+0x0300       ; zero terminated list of clusters
                                         ; that the kernel occupies
 
