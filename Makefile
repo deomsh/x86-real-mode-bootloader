@@ -72,3 +72,16 @@ oemd4f16.bin: oemd4f16.asm magic.mac
 
 oemd7f16.bin: oemd7f16.asm magic.mac
 	nasm -f bin -i magic.mac oemd7f16.asm -o oemd7f16.bin
+
+boot.bin: boot.nasm
+	nasm -f bin boot.nasm -o boot.bin
+
+iboot.bin: iboot.nasm
+	nasm -f bin iboot.nasm -o iboot.bin
+
+fat12b.bin: fat12b.nasm
+	nasm -f bin fat12b.nasm -o fat12b.bin
+
+fat16m.bin: fat16m.nasm
+	nasm -f bin fat16m.nasm -o fat16m.bin
+
