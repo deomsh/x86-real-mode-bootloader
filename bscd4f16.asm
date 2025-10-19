@@ -383,7 +383,8 @@ boot_success:
 		;call    print
                 ;db      " GO! ",0
                 mov     dl, [drive]
-		jmp	far [loadsegoff_60]
+                jmp     LOADSEG:0000    ; yes, pass control to kernel [deomsh: TRY]
+;jmp	far [loadsegoff_60]
 
 
 ; prints text after call to this function.
@@ -529,3 +530,4 @@ read_ok:
 filename        db      "IO      SYS",0,0
 
 sign            dw      0xAA55
+
