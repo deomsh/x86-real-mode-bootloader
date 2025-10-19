@@ -88,3 +88,9 @@ fat16m.bin: fat16m.nasm
 ## Errors: MSBOOT.BIN can not be compiled with nasm!
 #MSBOOT.BIN: MSBOOT.ASM
 #	nasm -f bin MSBOOT.ASM -o MSBOOT.BIN
+
+bcd4f16.bin: bcd4f16.asm
+	nasm -f bin bcd4f16.asm -o bcd4f16.bin
+
+bcd7f16.bin: bcd7f16.asm
+	nasm -f bin bcd7f16.asm -o bcd7f16.bin
