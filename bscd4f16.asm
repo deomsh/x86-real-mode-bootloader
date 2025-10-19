@@ -597,8 +597,9 @@ no_incr_es:     pop     ax
                 pop     si
                 ret
 
-filename        db      "IO      COM"
-
-		times	0x01fe-$+$$ db 0
+filename        db      "IO      SYS",0,0
+;filename        db      "IO      SYS"
+;		times	0x01fe-$+$$ db 0        ; error: TIMES value -46 is negative
 
 sign            dw      0xAA55
+
