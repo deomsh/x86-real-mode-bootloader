@@ -98,3 +98,7 @@ bscd7f16.bin: bscd7f16.asm
 
 oemboot4.bin: oemboot4.asm
 	nasm -f bin oemboot4.asm -o oemboot4.bin
+
+oemboot6.bin: oemboot6.asm
+	nasm -f bin oemboot6.asm -o oemboot6.bin
+
