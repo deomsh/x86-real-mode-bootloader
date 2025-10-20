@@ -94,6 +94,3 @@ bscd4f16.bin: bscd4f16.asm
 
 bscd7f16.bin: bscd7f16.asm
 	nasm -f bin bscd7f16.asm -o bscd7f16.bin
-
-OEMBOOTN.BIN: OEMBOOTN.ASM
-	nasm -f bin OEMBOOTN.ASM -o OEMBOOTN.ASM
