@@ -123,8 +123,8 @@ CPU 8086  ; enable assembler warnings to limit instruction set
 %define SETROOTDIR       1              ; if defined dir entry copied to 0:500
 %define LOOPONERR        1              ; if defined on error simply loop forever
 ;%define RETRYALWAYS     1              ; if defined defined retries read forever
-;%define WINBOOT         1              ; use win9x kernel calling conventions (name & jmp addr)
-;%define MSCOMPAT        1              ; sets default filename to MSDOS IO.SYS
+%define WINBOOT         1              ; use win9x kernel calling conventions (name & jmp addr)
+%define MSCOMPAT        1              ; sets default filename to MSDOS IO.SYS
 %ifdef WINBOOT                          ; if set also change from PC-DOS to
 %ifndef MSCOMPAT                        ; kernel name to MS-DOS kernel name
 %define MSCOMPAT
