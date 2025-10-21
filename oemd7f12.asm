@@ -388,7 +388,18 @@ ffDone:
 
                 ; Load the complete FAT into memory. The FAT can't be larger
                 ; than 128 kb
+%ifdef ISFAT12
                 lea     bx, [FATBUF]            ; es:bx = 0:0700
+%endif
+    ; --- Original Code ---
+    ; lea     bx, [FATBUF]            ; es:bx = 0:0700
+    ; --- MODIFIED Code for Safe Alignment --- [inserted by Gemini 2.5 Pro]
+%ifdef ISFAT16  
+				mov     ax, 0x1000              ; Our new, safe segment
+				mov     es, ax
+				xor     bx, bx                  ; ES:BX = 1000:0000 (absolute 0x10000)
+    ; --- END of MODIFIED Code for Safe Alignment ---
+%endif
                 mov     di, [sectPerFat]
                 mov     ax, word [fat_start]
                 mov     dx, word [fat_start+2]
@@ -435,7 +446,9 @@ fat_odd:
                 ; This is a FAT-16 disk. The maximal size of a 16-bit FAT
                 ; is 128 kb, so it may not fit within a single 64 kb segment.
 
-fat_16:         mov     dx, LOADSEG
+    ; --- Original Code ---
+    ; fat_16:         mov     dx, LOADSEG       ; DX = 0x0070
+fat_16:         mov     dx, 0x1000      ; Point DX to our new, safe segment [inserted by Gemini 2.5 Pro]
                 add     si, si          ; multiply cluster number by two
                 jnc     first_half      ; if overflow...
                 add     dh, 0x10        ; ...add 64 kb to segment value
