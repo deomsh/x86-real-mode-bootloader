@@ -59,7 +59,10 @@ print_at.bin: print_at.asm boot.img
 	nasm -f bin print_at.asm -o print_at.bin
 	mcopy -i boot.img print_at.bin ::IO.SYS
 
-# Test3
+# Test9
+
+oemdboot.bin: oemboot.asm magic.mac
+	nasm -f bin -i magic.mac oemdboot.asm -o oemdboot.bin
 
 oemd4f12.bin: oemd4f12.asm magic.mac  # or just magic.mac if oemd4f12.asm doesn't directly depend on it
 	nasm -f bin -i magic.mac oemd4f12.asm -o oemd4f12.bin   # Example: -i for include path
@@ -73,32 +76,5 @@ oemd4f16.bin: oemd4f16.asm magic.mac
 oemd7f16.bin: oemd7f16.asm magic.mac
 	nasm -f bin -i magic.mac oemd7f16.asm -o oemd7f16.bin
 
-boot.bin: boot.nasm
-	nasm -f bin boot.nasm -o boot.bin
-
-iboot.bin: iboot.nasm
-	nasm -f bin iboot.nasm -o iboot.bin
-
-fat12b.bin: fat12b.nasm
-	nasm -f bin fat12b.nasm -o fat12b.bin
-
-fat16m.bin: fat16m.nasm
-	nasm -f bin fat16m.nasm -o fat16m.bin
-
-## Errors: MSBOOT.BIN can not be compiled with nasm!
-## Used now for original oemboot.asm
-MSBOOT.BIN: MSBOOT.ASM
-	nasm -f bin MSBOOT.ASM -o MSBOOT.BIN
-
-bscd4f16.bin: bscd4f16.asm
-	nasm -f bin bscd4f16.asm -o bscd4f16.bin
-
-bscd7f16.bin: bscd7f16.asm
-	nasm -f bin bscd7f16.asm -o bscd7f16.bin
-
-oemboot4.bin: oemboot4.asm
-	nasm -f bin oemboot4.asm -o oemboot4.bin
-
-oemboot6.bin: oemboot6.asm
-	nasm -f bin oemboot6.asm -o oemboot6.bin
-
+oemtest.bin: oemtest.asm
+	nasm -f bin oemtest.asm -o oemtest.bin
