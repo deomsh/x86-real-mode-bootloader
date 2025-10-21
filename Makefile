@@ -61,8 +61,8 @@ print_at.bin: print_at.asm boot.img
 
 # Test9
 
-oemdboot.bin: oemboot.asm magic.mac
-	nasm -f bin -i magic.mac oemdboot.asm -o oemdboot.bin
+oemboot.bin: oemboot.asm magic.mac
+	nasm -f bin -i magic.mac oemboot.asm -o oemboot.bin
 
 oemd4f12.bin: oemd4f12.asm magic.mac  # or just magic.mac if oemd4f12.asm doesn't directly depend on it
 	nasm -f bin -i magic.mac oemd4f12.asm -o oemd4f12.bin   # Example: -i for include path
