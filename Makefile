@@ -78,3 +78,7 @@ oemd7f16.bin: oemd7f16.asm magic.mac
 
 oemtest.bin: oemtest.asm
 	nasm -f bin oemtest.asm -o oemtest.bin
+
+oemboot91.bin: oemboot91.asm
+	nasm -f bin oemboot91.asm -o oemboot91.bin
+
