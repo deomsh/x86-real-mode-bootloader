@@ -7,12 +7,12 @@
 ;
 CPU 8086
 ;%define ISFAT12         1
-%define ISFAT16         1
+;%define ISFAT16         1
 %define TRYLBAREAD       1
 %define SETROOTDIR       1
 %define LOOPONERR        1
-%define WINBOOT         1
-%define MSCOMPAT        1
+;%define WINBOOT         1
+;%define MSCOMPAT        1
 
 %ifdef WINBOOT
 %ifndef MSCOMPAT
