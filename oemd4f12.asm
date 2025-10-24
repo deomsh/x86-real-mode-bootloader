@@ -118,8 +118,8 @@
 
 CPU 8086  ; enable assembler warnings to limit instruction set
 
-;%define ISFAT12         1              ; only 1 of these should be set,
-%define ISFAT16         1              ; defines which FAT is supported
+%define ISFAT12         1              ; only 1 of these should be set,
+;%define ISFAT16         1              ; defines which FAT is supported
 
 %define TRYLBAREAD       1              ; undefine to use only CHS int 13h
 %define SETROOTDIR       1              ; if defined dir entry copied to 0:500
