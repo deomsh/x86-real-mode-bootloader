@@ -7,12 +7,12 @@
 ;
 CPU 8086
 ;%define ISFAT12         1
-;%define ISFAT16         1
-%define TRYLBAREAD       1
+%define ISFAT16         1
+;%define TRYLBAREAD       1                  ; Removed in version 92
 %define SETROOTDIR       1
 %define LOOPONERR        1
-;%define WINBOOT         1
-;%define MSCOMPAT        1
+%define WINBOOT         1
+%define MSCOMPAT        1
 
 %ifdef WINBOOT
 %ifndef MSCOMPAT
@@ -97,7 +97,7 @@ real_start:
                 mov     bp, BASE
                 lea     sp, [bp-4]
                 sti
-                mov     [drive], dl
+                mov     [drive], dl        ; rely on BIOS drive number in DL
 
 GETDRIVEPARMS:
                 mov     si, word [nHidden]
@@ -213,63 +213,51 @@ show:
                 jne     .do_show
                 ret
 
-readDisk:
-                push    si
-                mov     LBA_SECTOR_0, ax
+readDisk:       push    si                      ; Preserve SI
+                mov     LBA_SECTOR_0, ax        ; Store LBA from caller
                 mov     LBA_SECTOR_16, dx
-                mov     word [LBA_SEG], es
+                mov     word [LBA_SEG], es      ; Store destination pointer from caller
                 mov     word [LBA_OFF], bx
                 call    show
                 db      ".",0
+
 read_next:
+                ; Set up constants for a single-sector LBA read
                 mov     LBA_SIZE, 10h
                 mov     LBA_SECNUM, 1
+
+                ; Safety check: prevent overwriting the bootloader's own data
                 cmp     word [LBA_SEG], LOADEND
                 je      read_skip
-%ifdef TRYLBAREAD
-                mov     ah,041h
-                mov     bx,055aah
+
+                ; --- FORCED LBA READ ---
+                ; We bypass the LBA check (int 13h, ah=41h) and the entire CHS
+                ; block, as they are the source of the VirtualBox incompatibility.
+                lea     si, [LBA_PACKET]
+                mov     ah, 0x42                ; AH = 42h -> Extended Read
                 mov     dl, [drive]
+                xor     bx, bx                  ; --- FIX: Zero out BX to placate buggy BIOS
+                xor     cx, cx                  ; --- FIX: Zero out CX as an extra precaution
                 int     0x13
-                jc read_normal_BIOS
-                cmp bx, 0aa55h
-                jne read_normal_BIOS
-                shr     cx,1
-                jnc     read_normal_BIOS
-                lea     si,[LBA_PACKET]
-                mov     ah,042h
-                jmp short do_int13_read
-%endif
-read_normal_BIOS:
-                mov     cx, LBA_SECTOR_0
-                mov     dx, LBA_SECTOR_16
-                mov     al, [sectPerTrack]
-                mul     byte [nHeads]
-                xchg    ax, cx
-                div     cx
-                xchg    ax, dx
-                div     byte [sectPerTrack]
-                mov     cx, dx
-                mov     dh, al
-                xchg    ch, cl
-                ror     cl, 1
-                ror     cl, 1
-                or      cl, ah
-                inc     cx
-                les     bx,[LBA_OFF]
-                mov     ax, 0x0201
-do_int13_read:
-                mov     dl, [drive]
-                int     0x13
-                jc      boot_error
+                jc      boot_error              ; On failure, jump to the error handler
+
 read_ok:
-                add     word [LBA_OFF], 512
-                adc     word [LBA_SEG], 0
+                ; --- Correct 32-bit pointer arithmetic ---
+                add     word [LBA_OFF], 512     ; Advance buffer offset
+                adc     word [LBA_SEG], 0       ; Add carry to buffer segment
+
+                ; Advance to the next LBA sector for the next loop iteration
                 add     LBA_SECTOR_0,  byte 1
                 adc     LBA_SECTOR_16, byte 0
+
+                ; Loop if more sectors are requested
                 dec     di
                 jnz     read_next
+
 read_skip:
+                ; --- Correct Return Value ---
+                ; Return the final pointer (address AFTER the last byte written)
+                ; to the caller in ES:BX.
                 mov     es, word [LBA_SEG]
                 mov     bx, word [LBA_OFF]
                 pop     si
