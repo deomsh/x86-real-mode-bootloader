@@ -64,6 +64,12 @@ print_at.bin: print_at.asm boot.img
 oemboot.bin: oemboot.asm magic.mac
 	nasm -f bin -i magic.mac oemboot.asm -o oemboot.bin
 
+oemboot800.bin: oemboot800.asm
+	nasm -f bin oemboot800.asm -o oemboot800.bin
+
+oemboot801.bin: oemboot801.asm
+	nasm -f bin oemboot801.asm -o oemboot801.bin
+
 oemboot93.bin: oemboot93.asm
 	nasm -f bin oemboot93.asm -o oemboot93.bin
 
