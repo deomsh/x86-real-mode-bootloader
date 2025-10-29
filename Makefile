@@ -88,3 +88,5 @@ oemd7f16.bin: oemd7f16.asm
 oemtest.bin: oemtest.asm
 	nasm -f bin oemtest.asm -o oemtest.bin
 
+boot.bin: boot.asm
+	nasm -f bin boot.asm -o boot.bin
