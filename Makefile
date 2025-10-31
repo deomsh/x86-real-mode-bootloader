@@ -90,3 +90,7 @@ oemtest.bin: oemtest.asm
 
 boot.bin: boot.asm
 	nasm -f bin boot.asm -o boot.bin
+
+msdos.bin: msdos.nasm
+	nasm -f bin msdos.nasm -o msdos.bin
+
