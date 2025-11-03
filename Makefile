@@ -91,6 +91,11 @@ oemtest.bin: oemtest.asm
 boot.bin: boot.asm
 	nasm -f bin boot.asm -o boot.bin
 
+bootMS.bin: bootMS.asm
+	nasm -f bin bootMS.asm -o bootMS.bin
+
 msdos.bin: msdos.nasm
 	nasm -f bin msdos.nasm -o msdos.bin
 
+msboot.bin: msboot.nasm
+	nasm -f bin msboot.nasm -o msboot.bin
