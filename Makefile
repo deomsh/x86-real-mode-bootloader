@@ -97,5 +97,5 @@ bootMS.bin: bootMS.asm
 msdos.bin: msdos.nasm
 	nasm -f bin msdos.nasm -o msdos.bin
 
-msboot.bin: msboot.nasm
-	nasm -f bin msboot.nasm -o msboot.bin
+msboot.bin: MSBOOT.nasm
+	nasm -f bin MSBOOT.nasm -o msboot.bin
