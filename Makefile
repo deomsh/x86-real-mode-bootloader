@@ -100,5 +100,5 @@ msdos.bin: msdos.nasm
 msboot.bin: MSBOOT.nasm
 	nasm -f bin MSBOOT.nasm -o msboot.bin
 
-syslinux.bin: oldmbr.asm
-	nasm -f bin oldmbr.asm -o syslinux.bin
+oldmbr.bin: oldmbr.asm
+	nasm -f bin oldmbr.asm -o oldmbr.bin
