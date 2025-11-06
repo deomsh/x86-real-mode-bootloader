@@ -190,8 +190,10 @@ class BootloaderEmulator:
 
                 # Register operands
                 if op.type == X86_OP_REG:
-                    # Always include all register operands
-                    regs[instr.reg_name(op.value.reg)] = None
+                    # Skip write-only destination for MOV, MOVZX, LEA
+                    is_write_op = (i == 0 and instr.id in [X86_INS_MOV, X86_INS_MOVZX, X86_INS_LEA])
+                    if not is_write_op or include_write:
+                        regs[instr.reg_name(op.value.reg)] = None
 
                 # Memory operands - track base and index registers
                 elif op.type == X86_OP_MEM:
