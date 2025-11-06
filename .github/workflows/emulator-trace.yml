@@ -20,7 +20,8 @@ jobs:
     - name: Install additional utilities
       run: |
         apt-get update
-        apt-get install -y xxd file
+        apt-get install -y xxd file python3-pip
+        pip3 install --no-cache-dir --break-system-packages unicorn capstone
 
     - name: Compile simple bootloader
       run: |
