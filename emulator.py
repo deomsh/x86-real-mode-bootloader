@@ -179,20 +179,22 @@ class BootloaderEmulator:
         return None
 
     def _get_regs(self, instr, include_write=False):
-        """Extract relevant registers from instruction operands"""
+        """Extract relevant registers from instruction operands using Capstone metadata"""
         regs = OrderedDict()
         operands = instr.operands
 
         if instr.id != X86_INS_NOP:
-            # Check operands
+            # Check operands using Capstone's access metadata
             for i in range(len(operands)):
                 op = operands[i]
 
-                # Register operands
+                # Register operands - use access metadata to determine read/write
                 if op.type == X86_OP_REG:
-                    # Skip write-only destination for MOV, MOVZX, LEA
-                    is_write_op = (i == 0 and instr.id in [X86_INS_MOV, X86_INS_MOVZX, X86_INS_LEA])
-                    if not is_write_op or include_write:
+                    # Check if operand is read (not write-only)
+                    is_read = (op.access & CS_AC_READ) != 0
+                    is_write_only = (op.access == CS_AC_WRITE)
+
+                    if is_read or (is_write_only and include_write):
                         regs[instr.reg_name(op.value.reg)] = None
 
                 # Memory operands - track base and index registers
@@ -204,8 +206,6 @@ class BootloaderEmulator:
                         regs[instr.reg_name(mem.base)] = None
                     if mem.index != 0:
                         regs[instr.reg_name(mem.index)] = None
-                    # Track the memory address being accessed
-                    # We'll compute this separately
 
             # Add implicitly read registers
             for reg in instr.regs_read:
