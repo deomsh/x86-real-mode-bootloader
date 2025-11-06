@@ -17,6 +17,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Install additional utilities
+      run: |
+        apt-get update
+        apt-get install -y xxd file
+
     - name: Compile simple bootloader
       run: |
         echo "=========================================="
