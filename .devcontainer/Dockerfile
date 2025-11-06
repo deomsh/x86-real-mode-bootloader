@@ -18,6 +18,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt update && \
     nasm \
     python3 \
     python3-pip \
+    xxd \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages for emulator
