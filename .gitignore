@@ -8,3 +8,4 @@
 boot
 *.qcow2
 trace.json
+trace.txt

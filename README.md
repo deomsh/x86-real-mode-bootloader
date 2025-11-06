@@ -89,27 +89,28 @@ make dostest.img # Create test image with DOS files (not shipped)
 
 ## Python Emulator
 
-This project includes a Python-based emulator using [icicle-emu](https://github.com/icicle-emu/icicle-emu) that provides step-by-step instruction and memory access tracing.
+This project includes a Python-based emulator using [Unicorn Engine](https://www.unicorn-engine.org/) and [Capstone](https://www.capstone-engine.org/) that provides step-by-step instruction tracing with BIOS interrupt emulation.
 
 ### Quick Start
 
 ```sh
-# Install icicle-emu
-pip install icicle-emu
+# Install dependencies
+pip install unicorn capstone
 
 # Run emulator
 python3 emulator.py simple_boot.bin
 
-# With trace export
-python3 emulator.py simple_boot.bin -o trace.json
+# With disk image
+python3 emulator.py boot -d boot.img
 ```
 
 **Features:**
-- Step-by-step instruction execution
-- Full register state logging
-- Memory access tracking
-- JSON trace export
-- Configurable instruction limits
+- True 16-bit real mode emulation
+- Step-by-step instruction execution with disassembly
+- BIOS interrupt emulation (INT 0x10, INT 0x13)
+- Disk image support for complete boot process
+- Intelligent register tracking
+- Flat text trace output: `address|instruction|registers`
 
 See [EMULATOR_README.md](EMULATOR_README.md) for complete documentation.
 

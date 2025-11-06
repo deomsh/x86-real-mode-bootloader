@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install icicle-emu
+        pip install unicorn capstone
 
     - name: Install NASM
       run: |
@@ -43,38 +43,21 @@ jobs:
         echo "=========================================="
         echo "Running Bootloader Emulator"
         echo "=========================================="
-        python3 emulator.py simple_boot.bin -m 50 -o trace.json 2>&1 | grep -v "DEBUG"
+        python3 emulator.py simple_boot.bin -m 50 -o trace.txt
 
-    - name: Display trace summary
+    - name: Display trace file
       run: |
         echo ""
         echo "=========================================="
-        echo "Trace File Contents"
+        echo "Trace File Contents (first 30 lines)"
         echo "=========================================="
-        python3 << 'EOF'
-        import json
-
-        with open('trace.json', 'r') as f:
-            data = json.load(f)
-
-        print(f"Binary: {data['metadata']['binary']}")
-        print(f"Boot Address: {data['metadata']['boot_address']}")
-        print(f"Total Instructions: {data['metadata']['total_instructions']}")
-        print(f"\nFirst 10 instructions:\n")
-
-        for entry in data['trace'][:10]:
-            pc = entry['pc']
-            step = entry['step']
-            regs = entry['registers']
-            print(f"Step {step:03d}: PC=0x{pc:04X} | {entry['bytes']}")
-            print(f"         RAX=0x{regs['rax']:08X} RBX=0x{regs['rbx']:08X} RCX=0x{regs['rcx']:08X}")
-        EOF
+        head -30 trace.txt
 
     - name: Upload trace artifact
       uses: actions/upload-artifact@v4
       with:
         name: emulator-trace
-        path: trace.json
+        path: trace.txt
         retention-days: 30
 
     - name: Test different bootloader scenarios
@@ -85,7 +68,7 @@ jobs:
         echo "=========================================="
         echo ""
         echo "--- Running with 10 instructions ---"
-        python3 emulator.py simple_boot.bin -m 10 -q 2>&1 | grep -E "^\[|Total|Final PC" | grep -v "DEBUG"
+        python3 emulator.py simple_boot.bin -m 10 -q 2>&1 | grep -E "^\[|Total|Final"
         echo ""
         echo "--- Running with 100 instructions ---"
-        python3 emulator.py simple_boot.bin -m 100 -q 2>&1 | grep -E "^\[|Total|Final PC" | grep -v "DEBUG"
+        python3 emulator.py simple_boot.bin -m 100 -q 2>&1 | grep -E "^\[|Total|Final"
