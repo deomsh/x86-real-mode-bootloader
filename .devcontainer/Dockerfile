@@ -16,4 +16,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt update && \
     git \
     gdb \
     nasm \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages for emulator
+RUN pip3 install --no-cache-dir --break-system-packages unicorn capstone

@@ -190,17 +190,20 @@ class BootloaderEmulator:
 
                 # Register operands
                 if op.type == X86_OP_REG:
-                    # Skip write-only destination for MOV, MOVZX, LEA
-                    is_write_op = (i == 0 and instr.id in [X86_INS_MOV, X86_INS_MOVZX, X86_INS_LEA])
-                    if not is_write_op or include_write:
-                        regs[instr.reg_name(op.value.reg)] = None
+                    # Always include all register operands
+                    regs[instr.reg_name(op.value.reg)] = None
 
                 # Memory operands - track base and index registers
                 elif op.type == X86_OP_MEM:
-                    if op.value.mem.base != 0:
-                        regs[instr.reg_name(op.value.mem.base)] = None
-                    if op.value.mem.index != 0:
-                        regs[instr.reg_name(op.value.mem.index)] = None
+                    mem = op.value.mem
+                    if mem.segment != 0:
+                        regs[instr.reg_name(mem.segment)] = None
+                    if mem.base != 0:
+                        regs[instr.reg_name(mem.base)] = None
+                    if mem.index != 0:
+                        regs[instr.reg_name(mem.index)] = None
+                    # Track the memory address being accessed
+                    # We'll compute this separately
 
             # Add implicitly read registers
             for reg in instr.regs_read:
@@ -212,6 +215,37 @@ class BootloaderEmulator:
                     regs[instr.reg_name(reg)] = None
 
         return regs
+
+    def compute_memory_address(self, instr):
+        """Compute memory address for memory operands"""
+        for op in instr.operands:
+            if op.type == X86_OP_MEM:
+                mem = op.value.mem
+
+                # Get segment (default to DS if not specified)
+                segment = 0
+                if mem.segment != 0:
+                    segment = self.get_register_value(instr.reg_name(mem.segment))
+                else:
+                    # Default segment is DS for most operations
+                    segment = self.uc.reg_read(UC_X86_REG_DS)
+
+                # Get base register
+                base = 0
+                if mem.base != 0:
+                    base = self.get_register_value(instr.reg_name(mem.base))
+
+                # Get index register
+                index = 0
+                if mem.index != 0:
+                    index = self.get_register_value(instr.reg_name(mem.index))
+
+                # Calculate effective address: segment * 16 + base + index + displacement
+                effective_addr = (segment << 4) + base + (index * mem.scale) + mem.disp
+
+                return effective_addr, mem.disp
+
+        return None, None
 
     def hook_code(self, uc, address, size, user_data):
         """Hook called before each instruction execution"""
@@ -240,11 +274,38 @@ class BootloaderEmulator:
                     line += " "
                     line += instr.op_str
 
-                # Add relevant register values
+                # Add ALL relevant register values (before instruction execution)
                 for reg in self._get_regs(instr):
                     reg_value = self.get_register_value(reg)
                     if reg_value is not None:
                         line += f"|{reg}=0x{reg_value:x}"
+
+                # Add memory address and value if accessing memory
+                mem_addr, disp = self.compute_memory_address(instr)
+                if mem_addr is not None:
+                    try:
+                        # Determine size of memory access
+                        mem_size = 2  # Default to word (16-bit)
+                        for op in instr.operands:
+                            if op.type == X86_OP_MEM:
+                                mem_size = op.size
+                                break
+
+                        # Read memory value
+                        if mem_size == 1:
+                            mem_val = uc.mem_read(mem_addr, 1)[0]
+                            line += f"|mem[0x{mem_addr:x}]=0x{mem_val:02x}"
+                        elif mem_size == 2:
+                            mem_bytes = uc.mem_read(mem_addr, 2)
+                            mem_val = struct.unpack('<H', mem_bytes)[0]
+                            line += f"|mem[0x{mem_addr:x}]=0x{mem_val:04x}"
+                        elif mem_size == 4:
+                            mem_bytes = uc.mem_read(mem_addr, 4)
+                            mem_val = struct.unpack('<I', mem_bytes)[0]
+                            line += f"|mem[0x{mem_addr:x}]=0x{mem_val:08x}"
+                    except:
+                        # Memory not readable yet
+                        pass
 
                 # Special handling for CALL - show return address
                 if instr.id == X86_INS_CALL:
@@ -280,6 +341,8 @@ class BootloaderEmulator:
             uc.emu_stop()
         except Exception as e:
             print(f"\n[!] Error in hook_code: {e}")
+            import traceback
+            traceback.print_exc()
             uc.emu_stop()
 
     def hook_interrupt(self, uc, intno, user_data):
@@ -315,7 +378,80 @@ class BootloaderEmulator:
         ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
         dl = uc.reg_read(UC_X86_REG_DX) & 0xFF
 
-        if ah == 0x08:
+        if ah == 0x02:
+            # Read sectors (CHS addressing)
+            al = uc.reg_read(UC_X86_REG_AX) & 0xFF  # Number of sectors
+            ch = (uc.reg_read(UC_X86_REG_CX) >> 8) & 0xFF  # Cylinder (low 8 bits)
+            cl = uc.reg_read(UC_X86_REG_CX) & 0xFF  # Sector (bits 0-5) | Cylinder high (bits 6-7)
+            dh = (uc.reg_read(UC_X86_REG_DX) >> 8) & 0xFF  # Head
+
+            # Parse CHS values
+            cylinder = ch | ((cl & 0xC0) << 2)  # Cylinder is 10 bits
+            sector = cl & 0x3F  # Sector is bits 0-5 (1-based)
+            head = dh
+
+            # Buffer address from ES:BX
+            es = uc.reg_read(UC_X86_REG_ES)
+            bx = uc.reg_read(UC_X86_REG_BX)
+            buffer_addr = (es << 4) + bx
+
+            if self.verbose:
+                print(f"[INT 0x13] Read sectors (CHS) for drive 0x{dl:02X}")
+                print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={al}")
+                print(f"  - Buffer: 0x{es:04X}:0x{bx:04X} (0x{buffer_addr:05X})")
+
+            if not self.disk_image:
+                if self.verbose:
+                    print(f"  ⚠ No disk image attached!")
+                # Set CF to indicate error
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0100)  # AH=01 (error)
+                return
+
+            try:
+                # Convert CHS to LBA: LBA = (C * heads_per_cylinder + H) * sectors_per_track + (S - 1)
+                # Assume standard geometry: 2 heads, 80 sectors per track
+                heads_per_cylinder = 2
+                sectors_per_track = 80
+
+                lba = (cylinder * heads_per_cylinder + head) * sectors_per_track + (sector - 1)
+
+                if self.verbose:
+                    print(f"  - Converted to LBA: {lba}")
+
+                # Read from disk image
+                disk_offset = lba * 512
+                bytes_to_read = al * 512
+
+                if disk_offset + bytes_to_read <= len(self.disk_image):
+                    data = self.disk_image[disk_offset:disk_offset + bytes_to_read]
+                    uc.mem_write(buffer_addr, data)
+
+                    if self.verbose:
+                        print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
+
+                    # Clear CF to indicate success, set AL to sectors read
+                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                    uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+                    uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF00) | al)
+                else:
+                    if self.verbose:
+                        print(f"  ⚠ Read beyond disk image!")
+                    # Set CF to indicate error
+                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                    uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+                    uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0400)  # AH=04 (sector not found)
+
+            except Exception as e:
+                if self.verbose:
+                    print(f"  ⚠ Error reading disk: {e}")
+                # Set CF to indicate error
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0100)  # AH=01 (error)
+
+        elif ah == 0x08:
             # Get drive parameters
             if self.verbose:
                 print(f"[INT 0x13] Get drive parameters for drive 0x{dl:02X}")
