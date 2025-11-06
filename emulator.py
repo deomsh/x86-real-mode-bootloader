@@ -30,7 +30,7 @@ except ImportError:
 class BootloaderEmulator:
     """Emulator for x86 real mode bootloaders using Unicorn Engine"""
 
-    def __init__(self, binary_path, max_instructions=10000, trace_file="trace.txt", verbose=True, disk_image=None):
+    def __init__(self, binary_path, max_instructions=1000000, trace_file="trace.txt", verbose=True, disk_image=None):
         """
         Initialize the emulator
 
@@ -655,8 +655,8 @@ def main():
     parser.add_argument(
         '-m', '--max-instructions',
         type=int,
-        default=10000,
-        help='Maximum number of instructions to execute (default: 10000)'
+        default=1000000,
+        help='Maximum number of instructions to execute (default: 1000000)'
     )
     parser.add_argument(
         '-o', '--output',
