@@ -329,8 +329,8 @@ class BootloaderEmulator:
             if self.trace_output:
                 self.trace_output.write(line)
 
-            # Optionally print to console
-            if self.verbose and self.instruction_count <= 50:
+            # Optionally print to console (all instructions in verbose mode)
+            if self.verbose:
                 print(line.rstrip())
 
             # Check instruction limit

@@ -51,9 +51,9 @@ Arguments:
 Options:
   -h, --help           Show help message
   -m, --max-instructions N
-                       Maximum number of instructions to execute (default: 10000)
+                       Maximum number of instructions to execute (default: 1000000)
   -o, --output FILE    Output trace file (default: trace.txt)
-  -q, --quiet          Reduce verbosity (only show first 50 instructions)
+  -q, --quiet          Reduce verbosity (suppress console output, only write to trace file)
   -d, --disk IMAGE     Attach disk image file (e.g., boot.img)
 ```
 
