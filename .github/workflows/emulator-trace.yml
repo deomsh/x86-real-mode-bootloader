@@ -52,15 +52,7 @@ jobs:
         echo "=========================================="
         echo "Running Emulator on simple_boot.bin"
         echo "=========================================="
-        python3 emulator.py simple_boot.bin -m 50 -o trace_simple.txt
-
-    - name: Display simple bootloader trace
-      run: |
-        echo ""
-        echo "=========================================="
-        echo "Simple Bootloader Trace (first 30 lines)"
-        echo "=========================================="
-        head -30 trace_simple.txt
+        python3 emulator.py simple_boot.bin -o trace_simple.txt
 
     - name: Run emulator on FAT bootloader
       run: |
@@ -68,18 +60,7 @@ jobs:
         echo "=========================================="
         echo "Running Emulator on boot (FAT bootloader)"
         echo "=========================================="
-        python3 emulator.py boot -d boot.img -m 500 -o trace_fat.txt
-
-    - name: Display FAT bootloader trace
-      run: |
-        echo ""
-        echo "=========================================="
-        echo "FAT Bootloader Trace (first 50 lines)"
-        echo "=========================================="
-        head -50 trace_fat.txt
-        echo ""
-        echo "--- Last 20 lines ---"
-        tail -20 trace_fat.txt
+        python3 emulator.py boot -d boot.img -o trace_fat.txt
 
     - name: Upload trace artifacts
       uses: actions/upload-artifact@v4
@@ -90,17 +71,28 @@ jobs:
           trace_fat.txt
         retention-days: 30
 
-    - name: Summary and statistics
+    - name: Display execution statistics
       run: |
         echo ""
         echo "=========================================="
         echo "Execution Statistics"
         echo "=========================================="
+        echo ""
         echo "Simple bootloader:"
-        echo "  Instructions: $(wc -l < trace_simple.txt)"
+        echo "  Instructions executed: $(wc -l < trace_simple.txt)"
+        echo "  First 30 instructions:"
+        head -30 trace_simple.txt
+        echo ""
+        echo "=========================================="
         echo ""
         echo "FAT bootloader:"
-        echo "  Instructions: $(wc -l < trace_fat.txt)"
+        echo "  Instructions executed: $(wc -l < trace_fat.txt)"
         echo "  INT 0x10 calls: $(grep -c 'int 0x10' trace_fat.txt || echo 0)"
         echo "  INT 0x13 calls: $(grep -c 'int 0x13' trace_fat.txt || echo 0)"
         echo "  Memory accesses: $(grep -c 'mem\[' trace_fat.txt || echo 0)"
+        echo ""
+        echo "  First 50 instructions:"
+        head -50 trace_fat.txt
+        echo ""
+        echo "  Last 20 instructions:"
+        tail -20 trace_fat.txt
