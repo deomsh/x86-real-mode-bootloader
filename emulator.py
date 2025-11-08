@@ -205,6 +205,10 @@ class BootloaderEmulator:
             print(f"Error: Disk image too small (must be at least 512 bytes)")
             sys.exit(1)
 
+    def mem_write(self, address: int, data: bytes):
+        self.uc.mem_write(address, data)
+        self.uc.ctl_remove_cache(address, address + len(data))
+
     def load_bootloader(self):
         """Load the bootloader from the first 512 bytes of disk image at 0x7C00"""
         print(f"[*] Loading bootloader from disk image...")
@@ -221,7 +225,7 @@ class BootloaderEmulator:
             print(f"  ⚠ Warning: Invalid boot signature: 0x{signature:04X} (expected 0xAA55)")
 
         # Load bootloader at 0x7C00
-        self.uc.mem_write(self.boot_address, bootloader_code)
+        self.mem_write(self.boot_address, bootloader_code)
         print(f"  - Loaded at 0x{self.boot_address:04X}")
 
     def setup_cpu_state(self):
@@ -360,13 +364,14 @@ class BootloaderEmulator:
 
             # Read instruction bytes
             try:
-                code = uc.mem_read(address, min(size, 15))
+                code = uc.mem_read(address, 15)
             except UcError:
                 code = b""
 
             # Disassemble instruction
             try:
                 instr = next(self.cs.disasm(code, address, 1))
+                code = code[:instr.size]
             except StopIteration:
                 instr = None  # Unsupported instruction
 
@@ -526,7 +531,7 @@ class BootloaderEmulator:
 
                 if disk_offset + bytes_to_read <= len(self.disk_image):
                     data = self.disk_image[disk_offset:disk_offset + bytes_to_read]
-                    uc.mem_write(buffer_addr, data)
+                    self.mem_write(buffer_addr, data)
 
                     if self.verbose:
                         print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
@@ -610,7 +615,7 @@ class BootloaderEmulator:
                 # Read from disk image
                 if disk_offset + bytes_to_read <= len(self.disk_image):
                     data = self.disk_image[disk_offset:disk_offset + bytes_to_read]
-                    uc.mem_write(buffer_addr, data)
+                    self.mem_write(buffer_addr, data)
 
                     if self.verbose:
                         print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
