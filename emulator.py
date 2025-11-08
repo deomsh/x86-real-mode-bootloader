@@ -21,7 +21,8 @@ from capstone.x86_const import * # type: ignore
 class BootloaderEmulator:
     """Emulator for x86 real mode bootloaders using Unicorn Engine"""
 
-    def __init__(self, disk_image_path, max_instructions=1000000, trace_file="trace.txt", verbose=True):
+    def __init__(self, disk_image_path, max_instructions=1000000, trace_file="trace.txt", verbose=True,
+                 geometry=None, floppy_type=None, drive_number=0x80):
         """
         Initialize the emulator
 
@@ -30,11 +31,23 @@ class BootloaderEmulator:
             max_instructions: Maximum number of instructions to execute
             trace_file: Output file for instruction trace
             verbose: Enable verbose console output
+            geometry: Manual CHS geometry as (cylinders, heads, sectors_per_track) tuple
+            floppy_type: Standard floppy type ('360K', '720K', '1.2M', '1.44M', '2.88M')
+            drive_number: BIOS drive number (0x00-0x7F for floppy, 0x80+ for HDD)
         """
         self.disk_image_path = Path(disk_image_path)
         self.max_instructions = max_instructions
         self.trace_file = trace_file
         self.verbose = verbose
+        self.drive_number = drive_number
+        self.manual_geometry = geometry
+        self.floppy_type = floppy_type
+
+        # CHS geometry (will be detected later)
+        self.cylinders = 0
+        self.heads = 0
+        self.sectors_per_track = 0
+        self.geometry_method = "Unknown"
 
         # Boot sector is loaded at 0x7C00
         self.boot_address = 0x7C00
@@ -71,9 +84,99 @@ class BootloaderEmulator:
         self.uc.mem_map(self.memory_base, self.memory_size, UC_PROT_ALL)
 
         # Zero out memory
-        self.uc.mem_write(self.memory_base, b'\x00' * self.memory_size)
+        self.mem_write(self.memory_base, b'\x00' * self.memory_size)
 
         print(f"  - Mapped {self.memory_size // 1024} KB at 0x{self.memory_base:08X}")
+
+    def detect_geometry(self):
+        """
+        Detect disk geometry following QEMU's algorithm:
+        1. Manual override (if specified)
+        2. Floppy type override (if specified)
+        3. Floppy auto-detect (if drive < 0x80 and size matches)
+        4. MBR partition table (extract from ending CHS)
+        5. Fallback: 16 heads, 63 sectors/track (QEMU default)
+        """
+        # Standard floppy geometries (size_bytes: (cylinders, heads, sectors, name))
+        FLOPPY_TYPES = {
+            '360K':  (40, 2, 9,  360 * 1024),
+            '720K':  (80, 2, 9,  720 * 1024),
+            '1.2M':  (80, 2, 15, 1200 * 1024),
+            '1.44M': (80, 2, 18, 1440 * 1024),
+            '2.88M': (80, 2, 36, 2880 * 1024),
+        }
+
+        total_sectors = self.disk_size // 512
+
+        # Method 1: Manual geometry override
+        if self.manual_geometry:
+            self.cylinders, self.heads, self.sectors_per_track = self.manual_geometry
+            self.geometry_method = "Manual override"
+            return
+
+        # Method 2: Floppy type override
+        if self.floppy_type:
+            c, h, s, _ = FLOPPY_TYPES[self.floppy_type]
+            self.cylinders = c
+            self.heads = h
+            self.sectors_per_track = s
+            self.geometry_method = f"Floppy type {self.floppy_type}"
+            return
+
+        # Method 3: Floppy auto-detect (if drive is floppy and size matches)
+        if self.drive_number < 0x80:
+            for floppy_name, (c, h, s, size) in FLOPPY_TYPES.items():
+                if self.disk_size == size:
+                    self.cylinders = c
+                    self.heads = h
+                    self.sectors_per_track = s
+                    self.geometry_method = f"Auto-detected floppy {floppy_name}"
+                    return
+
+        # Method 4: MBR partition table (QEMU's guess_disk_lchs algorithm)
+        # Read first 512 bytes (MBR)
+        if len(self.disk_image) >= 512:
+            mbr = self.disk_image[:512]
+
+            # Check for valid MBR signature (0x55AA at offset 510-511)
+            if mbr[510] == 0x55 and mbr[511] == 0xAA:
+                # Examine partition entries (4 entries starting at offset 0x1BE)
+                for i in range(4):
+                    offset = 0x1BE + (i * 16)
+                    entry = mbr[offset:offset + 16]
+
+                    # Check if partition entry has valid data (non-zero partition type)
+                    part_type = entry[4]
+                    if part_type != 0:
+                        # Extract ending CHS values
+                        end_head = entry[5]
+                        end_sector = entry[6] & 0x3F  # Lower 6 bits
+                        end_cyl_high = (entry[6] & 0xC0) << 2
+                        end_cyl_low = entry[7]
+                        end_cyl = end_cyl_high | end_cyl_low
+
+                        # Calculate geometry from ending CHS
+                        heads = end_head + 1
+                        sectors = end_sector
+
+                        # Validate (QEMU checks: cylinders between 1 and 16383)
+                        if sectors > 0 and heads > 0:
+                            cylinders = total_sectors // (heads * sectors)
+                            if 1 <= cylinders <= 16383:
+                                self.cylinders = cylinders
+                                self.heads = heads
+                                self.sectors_per_track = sectors
+                                self.geometry_method = "MBR partition table"
+                                return
+
+        # Method 5: Fallback geometry (QEMU's guess_chs_for_size)
+        # Default: 16 heads, 63 sectors/track
+        self.heads = 16
+        self.sectors_per_track = 63
+        self.cylinders = total_sectors // (self.heads * self.sectors_per_track)
+        if total_sectors % (self.heads * self.sectors_per_track) != 0:
+            self.cylinders += 1
+        self.geometry_method = "Fallback (QEMU default: 16H/63S)"
 
     def load_disk_image(self):
         """Load disk image"""
@@ -88,6 +191,15 @@ class BootloaderEmulator:
 
         self.disk_size = len(self.disk_image)
         print(f"  - Disk image size: {self.disk_size} bytes ({self.disk_size // 1024} KB)")
+
+        # Detect disk geometry
+        self.detect_geometry()
+        print(f"[*] Disk geometry:")
+        print(f"  - Cylinders: {self.cylinders}")
+        print(f"  - Heads: {self.heads}")
+        print(f"  - Sectors/Track: {self.sectors_per_track}")
+        print(f"  - Total Sectors: {self.disk_size // 512}")
+        print(f"  - Method: {self.geometry_method}")
 
         if self.disk_size < 512:
             print(f"Error: Disk image too small (must be at least 512 bytes)")
@@ -129,7 +241,7 @@ class BootloaderEmulator:
         self.uc.reg_write(UC_X86_REG_SP, self.boot_address)
 
         # Real mode typically boots with DL = drive number
-        self.uc.reg_write(UC_X86_REG_DL, 0x80)  # 0x80 for hard disk
+        self.uc.reg_write(UC_X86_REG_DL, self.drive_number)
 
         # Clear other registers
         for reg in [UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX,
@@ -138,7 +250,7 @@ class BootloaderEmulator:
 
         print(f"  - CS:IP: 0x{0x0000:04X}:0x{self.boot_address:04X}")
         print(f"  - SS:SP: 0x{0x0000:04X}:0x{self.boot_address:04X}")
-        print(f"  - DL: 0x80 (drive number)")
+        print(f"  - DL: 0x{self.drive_number:02X} (drive number)")
 
     def get_register_value(self, reg_name) -> int:
         """Get register value by name"""
@@ -356,6 +468,7 @@ class BootloaderEmulator:
         else:
             if self.verbose:
                 print(f"[INT] Unhandled interrupt 0x{intno:02X} at 0x{ip:04X}")
+            uc.emu_stop()
 
     def handle_int10(self, uc: Uc):
         """Handle INT 0x10 - Video Services"""
@@ -401,12 +514,8 @@ class BootloaderEmulator:
                 print(f"  - Buffer: 0x{es:04X}:0x{bx:04X} (0x{buffer_addr:05X})")
 
             try:
-                # Convert CHS to LBA: LBA = (C * heads_per_cylinder + H) * sectors_per_track + (S - 1)
-                # Assume standard geometry: 2 heads, 80 sectors per track
-                heads_per_cylinder = 2
-                sectors_per_track = 80
-
-                lba = (cylinder * heads_per_cylinder + head) * sectors_per_track + (sector - 1)
+                # Convert CHS to LBA: LBA = (C * heads + H) * sectors_per_track + (S - 1)
+                lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
 
                 if self.verbose:
                     print(f"  - Converted to LBA: {lba}")
@@ -448,11 +557,23 @@ class BootloaderEmulator:
             if self.verbose:
                 print(f"[INT 0x13] Get drive parameters for drive 0x{dl:02X}")
 
-            # Return fake geometry: 80 sectors per track, 2 heads
-            # CX = sectors per track (bits 0-5) | cylinder (bits 6-15)
-            # DH = max head number
-            uc.reg_write(UC_X86_REG_CX, 0x0050)  # 80 sectors
-            uc.reg_write(UC_X86_REG_DX, (uc.reg_read(UC_X86_REG_DX) & 0xFF) | 0x0100)  # 1 head (0-indexed)
+            # Return detected geometry
+            # CX = sectors per track (bits 0-5) | cylinder high bits (bits 6-7) | cylinder low (bits 8-15)
+            # DH = max head number (heads - 1, 0-indexed)
+            # DL = number of drives
+
+            max_cylinder = self.cylinders - 1
+            max_head = self.heads - 1
+            sectors = self.sectors_per_track
+
+            # Build CX register: sectors in low 6 bits, cylinder in upper 10 bits
+            cx = sectors | ((max_cylinder & 0x300) >> 2) | ((max_cylinder & 0xFF) << 8)
+            uc.reg_write(UC_X86_REG_CX, cx)
+            uc.reg_write(UC_X86_REG_DX, (dl & 0xFF) | ((max_head & 0xFF) << 8))
+
+            if self.verbose:
+                print(f"  - Returning geometry: C={self.cylinders}, H={self.heads}, S={self.sectors_per_track}")
+                print(f"  - CX=0x{cx:04X}, DH=0x{max_head:02X}")
 
             # Clear CF to indicate success
             flags = uc.reg_read(UC_X86_REG_EFLAGS)
@@ -513,6 +634,7 @@ class BootloaderEmulator:
         else:
             if self.verbose:
                 print(f"[INT 0x13] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
 
     def hook_mem_invalid(self, uc: Uc, access, address, size, value, user_data):
         """Hook called on invalid memory access"""
@@ -652,6 +774,24 @@ def main():
         action='store_true',
         help='Reduce verbosity (only show first 50 instructions)'
     )
+    parser.add_argument(
+        '-g', '--geometry',
+        type=str,
+        metavar='C,H,S',
+        help='Manual CHS geometry (cylinders,heads,sectors) e.g., 120,16,63'
+    )
+    parser.add_argument(
+        '-f', '--floppy-type',
+        type=str,
+        choices=['360K', '720K', '1.2M', '1.44M', '2.88M'],
+        help='Standard floppy disk type (implies --drive-number 0x00)'
+    )
+    parser.add_argument(
+        '-d', '--drive-number',
+        type=str,
+        default='0x80',
+        help='BIOS drive number (default: 0x80 for HDD, use 0x00 for floppy)'
+    )
 
     args = parser.parse_args()
 
@@ -660,12 +800,36 @@ def main():
         print(f"Error: Disk image not found: {args.disk_image}")
         sys.exit(1)
 
+    # Parse geometry if provided
+    geometry = None
+    if args.geometry:
+        try:
+            parts = args.geometry.split(',')
+            if len(parts) != 3:
+                raise ValueError("Geometry must be in format C,H,S")
+            geometry = tuple(int(p.strip()) for p in parts)
+        except ValueError as e:
+            print(f"Error: Invalid geometry format: {e}")
+            sys.exit(1)
+
+    # Parse drive number
+    try:
+        drive_number = int(args.drive_number, 0)  # Supports 0x prefix
+        if args.floppy_type and drive_number >= 0x80:
+            drive_number = 0x00  # Override to floppy if floppy type specified
+    except ValueError:
+        print(f"Error: Invalid drive number: {args.drive_number}")
+        sys.exit(1)
+
     # Create and run emulator
     emulator = BootloaderEmulator(
         disk_image_path=args.disk_image,
         max_instructions=args.max_instructions,
         trace_file=args.output,
-        verbose=not args.quiet
+        verbose=not args.quiet,
+        geometry=geometry,
+        floppy_type=args.floppy_type,
+        drive_number=drive_number
     )
 
     emulator.setup_cpu_state()
