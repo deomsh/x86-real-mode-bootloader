@@ -2,7 +2,7 @@
 """
 x86 Real Mode Bootloader Emulator using Unicorn Engine and Capstone
 
-This emulator loads a bootloader binary and emulates it step-by-step,
+This emulator loads a disk image and emulates the bootloader from the first 512 bytes,
 logging every instruction execution with relevant registers and memory accesses.
 """
 
@@ -12,40 +12,29 @@ import argparse
 from pathlib import Path
 from collections import OrderedDict
 
-try:
-    from unicorn import *
-    from unicorn.x86_const import *
-except ImportError:
-    print("Error: unicorn not installed. Install with: pip install unicorn")
-    sys.exit(1)
+from unicorn import * # type: ignore
+from unicorn.x86_const import * # type: ignore
 
-try:
-    from capstone import *
-    from capstone.x86_const import *
-except ImportError:
-    print("Error: capstone not installed. Install with: pip install capstone")
-    sys.exit(1)
-
+from capstone import * # type: ignore
+from capstone.x86_const import * # type: ignore
 
 class BootloaderEmulator:
     """Emulator for x86 real mode bootloaders using Unicorn Engine"""
 
-    def __init__(self, binary_path, max_instructions=1000000, trace_file="trace.txt", verbose=True, disk_image=None):
+    def __init__(self, disk_image_path, max_instructions=1000000, trace_file="trace.txt", verbose=True):
         """
         Initialize the emulator
 
         Args:
-            binary_path: Path to the bootloader binary file
+            disk_image_path: Path to disk image file (bootloader loaded from first 512 bytes)
             max_instructions: Maximum number of instructions to execute
             trace_file: Output file for instruction trace
             verbose: Enable verbose console output
-            disk_image: Optional path to disk image file to attach
         """
-        self.binary_path = Path(binary_path)
+        self.disk_image_path = Path(disk_image_path)
         self.max_instructions = max_instructions
         self.trace_file = trace_file
         self.verbose = verbose
-        self.disk_image_path = Path(disk_image) if disk_image else None
 
         # Boot sector is loaded at 0x7C00
         self.boot_address = 0x7C00
@@ -66,10 +55,13 @@ class BootloaderEmulator:
         self.instruction_count = 0
         self.trace_output = None
         self.last_exception = None
+        self.screen_output = ""
 
         # Disk emulation
-        self.disk_image = None
-        self.disk_size = 0
+
+        self.setup_memory()
+        self.load_disk_image()
+        self.load_bootloader()
 
     def setup_memory(self):
         """Set up memory regions for the emulator"""
@@ -84,15 +76,12 @@ class BootloaderEmulator:
         print(f"  - Mapped {self.memory_size // 1024} KB at 0x{self.memory_base:08X}")
 
     def load_disk_image(self):
-        """Load disk image if provided"""
-        if not self.disk_image_path:
-            return
-
+        """Load disk image"""
         print(f"[*] Loading disk image from {self.disk_image_path}...")
 
         if not self.disk_image_path.exists():
-            print(f"  ⚠ Warning: Disk image not found: {self.disk_image_path}")
-            return
+            print(f"Error: Disk image not found: {self.disk_image_path}")
+            sys.exit(1)
 
         with open(self.disk_image_path, 'rb') as f:
             self.disk_image = f.read()
@@ -100,32 +89,24 @@ class BootloaderEmulator:
         self.disk_size = len(self.disk_image)
         print(f"  - Disk image size: {self.disk_size} bytes ({self.disk_size // 1024} KB)")
 
+        if self.disk_size < 512:
+            print(f"Error: Disk image too small (must be at least 512 bytes)")
+            sys.exit(1)
+
     def load_bootloader(self):
-        """Load the bootloader binary at 0x7C00"""
-        print(f"[*] Loading bootloader from {self.binary_path}...")
+        """Load the bootloader from the first 512 bytes of disk image at 0x7C00"""
+        print(f"[*] Loading bootloader from disk image...")
 
-        # If we have a disk image, load boot sector from it
-        if self.disk_image:
-            if len(self.disk_image) >= 512:
-                bootloader_code = self.disk_image[:512]
-                print(f"  - Loaded boot sector from disk image")
-            else:
-                print(f"  ⚠ Warning: Disk image too small, loading from binary file")
-                with open(self.binary_path, 'rb') as f:
-                    bootloader_code = f.read()
-        else:
-            with open(self.binary_path, 'rb') as f:
-                bootloader_code = f.read()
-
-        print(f"  - Bootloader size: {len(bootloader_code)} bytes")
+        # Load boot sector from first 512 bytes of disk image
+        bootloader_code = self.disk_image[:512]
+        print(f"  - Loaded boot sector from disk image (512 bytes)")
 
         # Verify boot signature (0xAA55 at offset 510-511)
-        if len(bootloader_code) >= 512:
-            signature = struct.unpack('<H', bootloader_code[510:512])[0]
-            if signature == 0xAA55:
-                print(f"  ✓ Valid boot signature: 0x{signature:04X}")
-            else:
-                print(f"  ⚠ Warning: Invalid boot signature: 0x{signature:04X} (expected 0xAA55)")
+        signature = struct.unpack('<H', bootloader_code[510:512])[0]
+        if signature == 0xAA55:
+            print(f"  ✓ Valid boot signature: 0x{signature:04X}")
+        else:
+            print(f"  ⚠ Warning: Invalid boot signature: 0x{signature:04X} (expected 0xAA55)")
 
         # Load bootloader at 0x7C00
         self.uc.mem_write(self.boot_address, bootloader_code)
@@ -159,7 +140,7 @@ class BootloaderEmulator:
         print(f"  - SS:SP: 0x{0x0000:04X}:0x{self.boot_address:04X}")
         print(f"  - DL: 0x80 (drive number)")
 
-    def get_register_value(self, reg_name):
+    def get_register_value(self, reg_name) -> int:
         """Get register value by name"""
         reg_map = {
             'ah': UC_X86_REG_AH, 'al': UC_X86_REG_AL, 'ax': UC_X86_REG_AX,
@@ -176,7 +157,7 @@ class BootloaderEmulator:
         reg_name_lower = reg_name.lower()
         if reg_name_lower in reg_map:
             return self.uc.reg_read(reg_map[reg_name_lower])
-        return None
+        raise KeyError(f"Register not found: '{reg_name_lower}'")
 
     def _get_regs(self, instr, include_write=False):
         """Extract relevant registers from instruction operands using Capstone metadata"""
@@ -195,28 +176,39 @@ class BootloaderEmulator:
                     is_write_only = (op.access == CS_AC_WRITE)
 
                     if is_read or (is_write_only and include_write):
-                        regs[instr.reg_name(op.value.reg)] = None
+                        regs[self.reg_name(op.value.reg)] = None
 
                 # Memory operands - track base and index registers
                 elif op.type == X86_OP_MEM:
                     mem = op.value.mem
                     if mem.segment != 0:
-                        regs[instr.reg_name(mem.segment)] = None
+                        regs[self.reg_name(mem.segment)] = None
                     if mem.base != 0:
-                        regs[instr.reg_name(mem.base)] = None
+                        regs[self.reg_name(mem.base)] = None
                     if mem.index != 0:
-                        regs[instr.reg_name(mem.index)] = None
+                        regs[self.reg_name(mem.index)] = None
 
             # Add implicitly read registers
             for reg in instr.regs_read:
-                regs[instr.reg_name(reg)] = None
+                regs[self.reg_name(reg)] = None
 
             # Optionally add written registers
             if include_write:
                 for reg in instr.regs_write:
-                    regs[instr.reg_name(reg)] = None
+                    regs[self.reg_name(reg)] = None
 
         return regs
+    
+    def reg_name(self, reg_id: int):
+        name = self.cs.reg_name(reg_id)
+        if name is None:
+            return None
+        # HACK: capstone returns "esp" in 16-bit mode
+        if name == "esp":
+            return "sp"
+        elif name == "eip":
+            return "ip"
+        return name
 
     def compute_memory_address(self, instr):
         """Compute memory address for memory operands"""
@@ -227,20 +219,20 @@ class BootloaderEmulator:
                 # Get segment (default to DS if not specified)
                 segment = 0
                 if mem.segment != 0:
-                    segment = self.get_register_value(instr.reg_name(mem.segment))
+                    segment = self.get_register_value(self.reg_name(mem.segment))
                 else:
                     # Default segment is DS for most operations
-                    segment = self.uc.reg_read(UC_X86_REG_DS)
+                    segment = self.get_register_value("DS")
 
                 # Get base register
                 base = 0
                 if mem.base != 0:
-                    base = self.get_register_value(instr.reg_name(mem.base))
+                    base = self.get_register_value(self.reg_name(mem.base))
 
                 # Get index register
                 index = 0
                 if mem.index != 0:
-                    index = self.get_register_value(instr.reg_name(mem.index))
+                    index = self.get_register_value(self.reg_name(mem.index))
 
                 # Calculate effective address: segment * 16 + base + index + displacement
                 effective_addr = (segment << 4) + base + (index * mem.scale) + mem.disp
@@ -249,7 +241,7 @@ class BootloaderEmulator:
 
         return None, None
 
-    def hook_code(self, uc, address, size, user_data):
+    def hook_code(self, uc: Uc, address, size, user_data):
         """Hook called before each instruction execution"""
         try:
             self.instruction_count += 1
@@ -267,7 +259,7 @@ class BootloaderEmulator:
                 instr = None  # Unsupported instruction
 
             # Build trace line: address|instruction|registers
-            line = f"0x{address:04x}|"
+            line = f"0x{address:04x}|{code.hex().ljust(10)}|"
 
             if instr is not None:
                 # Add disassembled instruction
@@ -338,6 +330,10 @@ class BootloaderEmulator:
                 print(f"\n[*] Reached maximum instruction limit ({self.max_instructions})")
                 uc.emu_stop()
 
+            if code == b"\xeb\xfe":
+                print("\n[*] Infinite loop detected!")
+                uc.emu_stop()
+
         except (KeyboardInterrupt, SystemExit):
             print(f"\n[!] Interrupted by user")
             uc.emu_stop()
@@ -347,7 +343,7 @@ class BootloaderEmulator:
             traceback.print_exc()
             uc.emu_stop()
 
-    def hook_interrupt(self, uc, intno, user_data):
+    def hook_interrupt(self, uc: Uc, intno, user_data):
         """Hook called on interrupt instructions"""
         ip = uc.reg_read(UC_X86_REG_IP)
 
@@ -361,7 +357,7 @@ class BootloaderEmulator:
             if self.verbose:
                 print(f"[INT] Unhandled interrupt 0x{intno:02X} at 0x{ip:04X}")
 
-    def handle_int10(self, uc):
+    def handle_int10(self, uc: Uc):
         """Handle INT 0x10 - Video Services"""
         ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
 
@@ -371,11 +367,13 @@ class BootloaderEmulator:
             char = chr(al) if 32 <= al < 127 else f"\\x{al:02x}"
             if self.verbose:
                 print(f"[INT 0x10] Teletype output: '{char}'")
+                self.screen_output += char
         else:
             if self.verbose:
                 print(f"[INT 0x10] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
 
-    def handle_int13(self, uc):
+    def handle_int13(self, uc: Uc):
         """Handle INT 0x13 - Disk Services"""
         ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
         dl = uc.reg_read(UC_X86_REG_DX) & 0xFF
@@ -402,15 +400,6 @@ class BootloaderEmulator:
                 print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={al}")
                 print(f"  - Buffer: 0x{es:04X}:0x{bx:04X} (0x{buffer_addr:05X})")
 
-            if not self.disk_image:
-                if self.verbose:
-                    print(f"  ⚠ No disk image attached!")
-                # Set CF to indicate error
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0100)  # AH=01 (error)
-                return
-
             try:
                 # Convert CHS to LBA: LBA = (C * heads_per_cylinder + H) * sectors_per_track + (S - 1)
                 # Assume standard geometry: 2 heads, 80 sectors per track
@@ -432,6 +421,7 @@ class BootloaderEmulator:
 
                     if self.verbose:
                         print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
+                        print(f"  - Data (32 bytes): {data[:32].hex(' ')}")
 
                     # Clear CF to indicate success, set AL to sectors read
                     flags = uc.reg_read(UC_X86_REG_EFLAGS)
@@ -472,14 +462,6 @@ class BootloaderEmulator:
             # Extended read - LBA
             if self.verbose:
                 print(f"[INT 0x13] Extended read for drive 0x{dl:02X}")
-
-            if not self.disk_image:
-                if self.verbose:
-                    print(f"  ⚠ No disk image attached!")
-                # Set CF to indicate error
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                return
 
             # Read Disk Address Packet from DS:SI
             si = uc.reg_read(UC_X86_REG_SI)
@@ -532,7 +514,7 @@ class BootloaderEmulator:
             if self.verbose:
                 print(f"[INT 0x13] Unhandled function AH=0x{ah:02X}")
 
-    def hook_mem_invalid(self, uc, access, address, size, value, user_data):
+    def hook_mem_invalid(self, uc: Uc, access, address, size, value, user_data):
         """Hook called on invalid memory access"""
         access_type = "READ" if access == UC_MEM_READ else "WRITE" if access == UC_MEM_WRITE else "EXEC"
         print(f"\n[!] Invalid memory access: {access_type} at 0x{address:08X} (size: {size})")
@@ -641,6 +623,7 @@ class BootloaderEmulator:
 
         print(f"\n[*] Trace written to {self.trace_file}")
         print(f"    Total instructions: {self.instruction_count}")
+        print(f"\n[*] Screen output:\n{self.screen_output}")
 
 
 def main():
@@ -648,9 +631,9 @@ def main():
         description='Emulate x86 real mode bootloader with instruction tracing'
     )
     parser.add_argument(
-        'binary',
+        'disk_image',
         type=str,
-        help='Path to bootloader binary file'
+        help='Path to disk image file (bootloader loaded from first 512 bytes)'
     )
     parser.add_argument(
         '-m', '--max-instructions',
@@ -669,31 +652,22 @@ def main():
         action='store_true',
         help='Reduce verbosity (only show first 50 instructions)'
     )
-    parser.add_argument(
-        '-d', '--disk',
-        type=str,
-        help='Disk image file to attach (e.g., boot.img)'
-    )
 
     args = parser.parse_args()
 
-    # Check if binary exists
-    if not Path(args.binary).exists():
-        print(f"Error: Binary file not found: {args.binary}")
+    # Check if disk image exists
+    if not Path(args.disk_image).exists():
+        print(f"Error: Disk image not found: {args.disk_image}")
         sys.exit(1)
 
     # Create and run emulator
     emulator = BootloaderEmulator(
-        binary_path=args.binary,
+        disk_image_path=args.disk_image,
         max_instructions=args.max_instructions,
         trace_file=args.output,
-        verbose=not args.quiet,
-        disk_image=args.disk
+        verbose=not args.quiet
     )
 
-    emulator.setup_memory()
-    emulator.load_disk_image()
-    emulator.load_bootloader()
     emulator.setup_cpu_state()
     emulator.run()
 
