@@ -482,7 +482,12 @@ class BootloaderEmulator:
         if ah == 0x0E:
             # Teletype output
             al = uc.reg_read(UC_X86_REG_AX) & 0xFF
-            char = chr(al) if 32 <= al < 127 else f"\\x{al:02x}"
+            if al == 0x0d:
+                char = "\r"
+            elif al == 0x0a:
+                char = "\n"
+            else:
+                char = chr(al) if 32 <= al < 127 else f"\\x{al:02x}"
             if self.verbose:
                 print(f"[INT 0x10] Teletype output: '{char}'")
                 self.screen_output += char
