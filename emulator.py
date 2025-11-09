@@ -991,7 +991,7 @@ class BootloaderEmulator:
             else:
                 char = chr(al) if 32 <= al < 127 else f"\\x{al:02x}"
             if self.verbose:
-                print(f"[INT 0x10] Teletype output: '{char}'")
+                print(f"[INT 0x10] Teletype output: {repr(char)}")
                 self.screen_output += char
         else:
             if self.verbose:
