@@ -1,7 +1,5 @@
 # x86 real mode bootloader
 
-[![Bootloader Emulator Trace](https://github.com/mrexodia/x86-real-mode-bootloader/actions/workflows/emulator-trace.yml/badge.svg)](https://github.com/mrexodia/x86-real-mode-bootloader/actions/workflows/emulator-trace.yml)
-
 ![](.github/screenshot.png)
 
 This is a bootloader for x86 real mode, written using [`gcc-ia16`](https://github.com/tkchia/gcc-ia16).
@@ -51,8 +49,7 @@ git config --global core.crlf false
 - `io.ld` - Linker script for IO.SYS (max 3 sectors)
 - `i8086.xml`, [`i386-32bit.xml`](https://github.com/qemu/qemu/blob/master/gdb-xml/i386-32bit.xml) - GDB architecture definitions for 16-bit debugging
 - `real-mode.gdb` - GDB script for debugging real mode code
-- **`emulator.py`** - Python emulator using icicle-emu for step-by-step tracing
-- **`EMULATOR_README.md`** - Comprehensive emulator documentation
+- `emulator.py` - Python emulator using unicorn for step-by-step tracing
 
 ## Prerequisites
 
@@ -89,30 +86,15 @@ make dostest.img # Create test image with DOS files (not shipped)
 
 ## Python Emulator
 
-This project includes a Python-based emulator using [Unicorn Engine](https://www.unicorn-engine.org/) and [Capstone](https://www.capstone-engine.org/) that provides step-by-step instruction tracing with BIOS interrupt emulation.
-
-### Quick Start
+This project includes a Python-based emulator using [Unicorn Engine](https://www.unicorn-engine.org/) and [Capstone](https://www.capstone-engine.org/) that provides step-by-step instruction tracing with BIOS interrupt emulation:
 
 ```sh
 # Install dependencies
 pip install unicorn capstone
 
-# Run emulator
-python3 emulator.py simple_boot.bin
-
-# With disk image
-python3 emulator.py boot -d boot.img
+# Run emulator with disk image
+python3 emulator.py boot.img
 ```
-
-**Features:**
-- True 16-bit real mode emulation
-- Step-by-step instruction execution with disassembly
-- BIOS interrupt emulation (INT 0x10, INT 0x13)
-- Disk image support for complete boot process
-- Intelligent register tracking
-- Flat text trace output: `address|instruction|registers`
-
-See [EMULATOR_README.md](EMULATOR_README.md) for complete documentation.
 
 ## Debugging
 
