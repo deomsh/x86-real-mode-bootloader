@@ -5,6 +5,7 @@
 *.raw
 *.log
 *.map
+*.bin
 boot
 *.qcow2
 trace.json

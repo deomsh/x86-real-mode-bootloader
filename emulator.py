@@ -802,6 +802,30 @@ class BootloaderEmulator:
         self.last_exception = f"Invalid memory {access_type}"
         return False
 
+    def hook_ivt_access(self, uc: Uc, access, address, size, value, _user_data):
+        """Hook called on IVT region (0x0000-0x03FF) memory access"""
+        # Calculate interrupt vector number (each vector is 4 bytes)
+        int_num = address // 4
+
+        # Get current IP for context
+        ip = uc.reg_read(UC_X86_REG_IP)
+
+        # Format access type
+        access_type = "READ" if access == UC_MEM_READ else "WRITE"
+
+        # Format the trace line
+        line = f"[IVT {access_type}] 0x{address:04X} | size={size} | int={int_num:02X} | value=0x{value:X} | ip=0x{ip:04X}\n"
+
+        # Write to trace file unconditionally
+        if self.trace_output:
+            self.trace_output.write(line)
+
+        # Also print to console if verbose
+        if self.verbose:
+            print(line.strip())
+
+        return True
+
     def run(self):
         """Run the emulator"""
         print("\n" + "="*80)
@@ -822,6 +846,14 @@ class BootloaderEmulator:
         self.uc.hook_add(
             UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
             self.hook_mem_invalid
+        )
+
+        # Add IVT-range-specific memory hook (0x0000-0x03FF)
+        self.uc.hook_add(
+            UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
+            self.hook_ivt_access,
+            begin=0x0000,
+            end=0x03FF
         )
 
         try:
