@@ -467,9 +467,21 @@ class BootloaderEmulator:
         if intno == 0x10:
             # Video Services
             self.handle_int10(uc)
+        elif intno == 0x11:
+            # Get Equipment List
+            self.handle_int11(uc)
+        elif intno == 0x12:
+            # Get Memory Size
+            self.handle_int12(uc)
         elif intno == 0x13:
             # Disk Services
             self.handle_int13(uc)
+        elif intno == 0x15:
+            # System Services
+            self.handle_int15(uc)
+        elif intno == 0x16:
+            # Keyboard Services
+            self.handle_int16(uc)
         else:
             if self.verbose:
                 print(f"[INT] Unhandled interrupt 0x{intno:02X} at 0x{ip:04X}")
@@ -501,7 +513,24 @@ class BootloaderEmulator:
         ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
         dl = uc.reg_read(UC_X86_REG_DX) & 0xFF
 
-        if ah == 0x02:
+        if ah == 0x00:
+            # Reset disk system
+            if self.verbose:
+                print(f"[INT 0x13] Reset disk system for drive 0x{dl:02X}")
+            # Clear CF to indicate success
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x01:
+            # Get disk status
+            if self.verbose:
+                print(f"[INT 0x13] Get disk status for drive 0x{dl:02X}")
+            # Return status 0 (no error)
+            uc.reg_write(UC_X86_REG_AX, 0)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x02:
             # Read sectors (CHS addressing)
             al = uc.reg_read(UC_X86_REG_AX) & 0xFF  # Number of sectors
             ch = (uc.reg_read(UC_X86_REG_CX) >> 8) & 0xFF  # Cylinder (low 8 bits)
@@ -641,9 +670,129 @@ class BootloaderEmulator:
                 # Set CF to indicate error
                 flags = uc.reg_read(UC_X86_REG_EFLAGS)
                 uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+        elif ah == 0x15:
+            # Get disk type
+            if self.verbose:
+                print(f"[INT 0x13] Get disk type for drive 0x{dl:02X}")
+            # AH=03 means fixed disk installed
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0300)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x41:
+            # Check INT 13 extensions present
+            if self.verbose:
+                print(f"[INT 0x13] Check extensions present for drive 0x{dl:02X}")
+            # BX should contain 0x55AA to indicate support
+            bx = uc.reg_read(UC_X86_REG_BX)
+            if bx == 0x55AA:
+                # Extensions present: return AH=0x30 (v3.0)
+                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x3000)
+                # CX = capabilities
+                uc.reg_write(UC_X86_REG_CX, 0x0003)  # Bits 0 and 1 set (basic support)
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+            else:
+                # Extension not supported
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
         else:
             if self.verbose:
                 print(f"[INT 0x13] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
+
+    def handle_int11(self, uc: Uc):
+        """Handle INT 0x11 - Get Equipment List"""
+        if self.verbose:
+            print(f"[INT 0x11] Get equipment list")
+        # AX = equipment list word
+        # Bit 0: Floppy drive installed
+        # Bit 1: Math coprocessor
+        # Bit 2: PS/2 pointing device
+        # Bits 3-5: Number of serial ports
+        # Bit 6: Game port
+        # Bits 7-9: Number of parallel ports
+        # Bits 10-11: Video mode (00=EGA/VGA, 01=40-column color, 10=80-column color, 11=monochrome)
+        # Bit 12: PS/2 mouse installed
+        # Bit 13: Extended memory
+
+        # Default: no floppy, no coprocessor, VGA (80-col color)
+        equipment = 0x0000
+        equipment |= (0b10 << 10)  # 80-column color video
+        uc.reg_write(UC_X86_REG_AX, equipment)
+
+    def handle_int12(self, uc: Uc):
+        """Handle INT 0x12 - Get Memory Size"""
+        if self.verbose:
+            print(f"[INT 0x12] Get memory size")
+        # AX = memory size in KB (conventional memory, typically 640KB)
+        memory_size_kb = 640
+        uc.reg_write(UC_X86_REG_AX, memory_size_kb)
+
+    def handle_int15(self, uc: Uc):
+        """Handle INT 0x15 - System Services"""
+        ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
+
+        if ah == 0x88:
+            # Get extended memory size
+            if self.verbose:
+                print(f"[INT 0x15] Get extended memory size")
+            # AX = extended memory in KB (above 1MB)
+            uc.reg_write(UC_X86_REG_AX, 0)  # No extended memory
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0xC0:
+            # Get system configuration
+            if self.verbose:
+                print(f"[INT 0x15] Get system configuration")
+            # ES:BX = pointer to configuration table
+            # For now, return error
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
+        elif ah == 0x53:
+            # APM BIOS functions
+            if self.verbose:
+                print(f"[INT 0x15] APM BIOS function AH=0x{ah:02X}")
+            # Return error (unsupported)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
+        else:
+            if self.verbose:
+                print(f"[INT 0x15] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
+
+    def handle_int16(self, uc: Uc):
+        """Handle INT 0x16 - Keyboard Services"""
+        ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
+
+        if ah == 0x00:
+            # Read keystroke
+            if self.verbose:
+                print(f"[INT 0x16] Read keystroke")
+            # For emulation, simulate pressing Enter (0x1C)
+            uc.reg_write(UC_X86_REG_AX, 0x1C0D)  # AL=0x0D (CR), AH=0x1C (scancode)
+
+        elif ah == 0x01:
+            # Check for keystroke
+            if self.verbose:
+                print(f"[INT 0x16] Check for keystroke")
+            # ZF=1 if no key available (set ZF)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0040)  # Set ZF
+
+        elif ah == 0x02:
+            # Get shift flags
+            if self.verbose:
+                print(f"[INT 0x16] Get shift flags")
+            uc.reg_write(UC_X86_REG_AX, 0)  # No modifiers
+
+        else:
+            if self.verbose:
+                print(f"[INT 0x16] Unhandled function AH=0x{ah:02X}")
             uc.emu_stop()
 
     def hook_mem_invalid(self, uc: Uc, access, address, size, value, user_data):
