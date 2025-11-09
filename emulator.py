@@ -9,14 +9,177 @@ logging every instruction execution with relevant registers and memory accesses.
 import sys
 import struct
 import argparse
+import ctypes
+from ctypes import c_uint8, c_uint16, c_uint32
+import re
 from pathlib import Path
 from collections import OrderedDict
+from typing import Optional, Tuple, Annotated, get_args, get_origin, Protocol
+
+from abc import abstractmethod
 
 from unicorn import * # type: ignore
 from unicorn.x86_const import * # type: ignore
 
 from capstone import * # type: ignore
 from capstone.x86_const import * # type: ignore
+
+class c_array(Protocol):
+    """Type hint for ctypes arrays"""
+    def __getitem__(self, index: int) -> int: ...
+    def __setitem__(self, index: int, value: int) -> None: ...
+    def __len__(self) -> int: ...
+    def __iter__(self): ...
+
+class _CStructMeta(type(ctypes.LittleEndianStructure)):
+    """Metaclass for ctypes structures with annotation support and comment extraction"""
+    def __new__(mcs, name, bases, namespace):
+        if "__annotations__" in namespace:
+            fields = []
+            comments = {}
+
+            # Build fields from annotations
+            for field_name, annotation in namespace["__annotations__"].items():
+                if not field_name.startswith("_"):
+                    # Handle Annotated types
+                    origin = get_origin(annotation)
+                    if origin is Annotated:
+                        args = get_args(annotation)
+                        # First arg is the display type, second is the actual ctypes type
+                        ctypes_type = args[1]
+                        fields.append((field_name, ctypes_type))
+                    else:
+                        fields.append((field_name, annotation))
+
+            # Extract comments from source code
+            try:
+                import sys
+                frame = sys._getframe(1)
+                filename = frame.f_code.co_filename
+                lineno = frame.f_lineno
+                with open(filename, 'r') as f:
+                    lines = f.readlines()
+                    for i in range(lineno - 1, max(0, lineno - 200), -1):
+                        line = lines[i]
+                        match = re.match(r'\s*(\w+):\s*[\w\[\]\*,\s]+\s*#\s*(.+)', line)
+                        if match:
+                            comments[match.group(1)] = match.group(2).strip()
+            except:
+                pass
+
+            namespace["_fields_"] = fields
+            namespace["_field_comments"] = comments
+        return super().__new__(mcs, name, bases, namespace)
+
+class c_struct(ctypes.LittleEndianStructure, metaclass=_CStructMeta):
+    """Base class for ctypes structures with annotation support"""
+    _pack_ = 1
+
+    @classmethod
+    def get_field_at_offset(cls, offset: int) -> Optional[Tuple[str, str, int]]:
+        """Find field at given offset within structure."""
+        current_offset = 0
+        for field_name, field_type in cls._fields_: # type: ignore
+            field_size = ctypes.sizeof(field_type)
+            if current_offset <= offset < current_offset + field_size:
+                comment = getattr(cls, '_field_comments', {}).get(field_name, "")
+                return (field_name, comment, field_size)
+            current_offset += field_size
+        return None
+
+
+class BIOSDataArea(c_struct):
+    """BIOS Data Area (BDA) at 0x0040:0x0000 (physical 0x00400)"""
+    com1_port: Annotated[int, c_uint16]                   # Serial port 1 address
+    com2_port: Annotated[int, c_uint16]                   # Serial port 2 address
+    com3_port: Annotated[int, c_uint16]                   # Serial port 3 address
+    com4_port: Annotated[int, c_uint16]                   # Serial port 4 address
+    lpt1_port: Annotated[int, c_uint16]                   # Parallel port 1 address
+    lpt2_port: Annotated[int, c_uint16]                   # Parallel port 2 address
+    lpt3_port: Annotated[int, c_uint16]                   # Parallel port 3 address
+    lpt4_port: Annotated[int, c_uint16]                   # Parallel port 4 address
+    equipment_list: Annotated[int, c_uint16]              # Equipment word
+    manufacturing_test: Annotated[int, c_uint8]           # Manufacturing test
+    memory_size_kb: Annotated[int, c_uint16]              # Memory size in KB
+    io_ram_size: Annotated[int, c_uint16]                 # IO RAM size
+    keyboard_flags_1: Annotated[int, c_uint8]             # Keyboard flags 1
+    keyboard_flags_2: Annotated[int, c_uint8]             # Keyboard flags 2
+    alt_keypad_entry: Annotated[int, c_uint8]             # Alt-keypad entry
+    kbd_buffer_head: Annotated[int, c_uint16]             # Keyboard buffer head pointer
+    kbd_buffer_tail: Annotated[int, c_uint16]             # Keyboard buffer tail pointer
+    kbd_buffer: Annotated[c_array, c_uint8 * 32]          # Keyboard buffer
+    diskette_calib_status: Annotated[int, c_uint8]        # Diskette calibration status
+    diskette_motor_status: Annotated[int, c_uint8]        # Diskette motor status
+    diskette_motor_timeout: Annotated[int, c_uint8]       # Diskette motor timeout
+    diskette_status: Annotated[int, c_uint8]              # Diskette status
+    diskette_controller: Annotated[c_array, c_uint8 * 7]  # Diskette controller status
+    video_mode: Annotated[int, c_uint8]                   # Video mode
+    video_columns: Annotated[int, c_uint16]               # Video columns
+    video_page_size: Annotated[int, c_uint16]             # Video page size
+    video_page_offset: Annotated[int, c_uint16]           # Video page offset
+    cursor_pos: Annotated[c_array, c_uint16 * 8]          # Cursor positions
+    cursor_end_line: Annotated[int, c_uint8]              # Cursor end line
+    cursor_start_line: Annotated[int, c_uint8]            # Cursor start line
+    active_page: Annotated[int, c_uint8]                  # Active display page
+    video_port: Annotated[int, c_uint16]                  # Video controller port
+    video_mode_reg: Annotated[int, c_uint8]               # Video mode register
+    video_palette: Annotated[int, c_uint8]                # Video palette
+    cassette_data: Annotated[c_array, c_uint8 * 5]        # Cassette data
+    timer_counter: Annotated[int, c_uint32]               # Timer counter
+    timer_overflow: Annotated[int, c_uint8]               # Timer overflow flag
+    break_flag: Annotated[int, c_uint8]                   # Break flag
+    reset_flag: Annotated[int, c_uint16]                  # Reset flag
+    hard_disk_status: Annotated[int, c_uint8]             # Hard disk status
+    num_hard_disks: Annotated[int, c_uint8]               # Number of hard disks
+    hard_disk_control: Annotated[int, c_uint8]            # Hard disk control byte
+    hard_disk_offset: Annotated[int, c_uint8]             # Hard disk offset
+    lpt1_timeout: Annotated[int, c_uint8]                 # LPT1 timeout
+    lpt2_timeout: Annotated[int, c_uint8]                 # LPT2 timeout
+    lpt3_timeout: Annotated[int, c_uint8]                 # LPT3 timeout
+    lpt4_timeout: Annotated[int, c_uint8]                 # LPT4 timeout
+    com1_timeout: Annotated[int, c_uint8]                 # COM1 timeout
+    com2_timeout: Annotated[int, c_uint8]                 # COM2 timeout
+    com3_timeout: Annotated[int, c_uint8]                 # COM3 timeout
+    com4_timeout: Annotated[int, c_uint8]                 # COM4 timeout
+    kbd_buffer_start: Annotated[int, c_uint16]            # Keyboard buffer start
+    kbd_buffer_end: Annotated[int, c_uint16]              # Keyboard buffer end
+    video_rows: Annotated[int, c_uint8]                   # Video rows
+    char_height: Annotated[int, c_uint16]                 # Character height
+    video_control: Annotated[int, c_uint8]                # Video control
+    video_switches: Annotated[int, c_uint8]               # Video switches
+    _padding: Annotated[c_array, c_uint8 * (256 - 0x89)]
+
+
+class DiskParameterTable(c_struct):
+    """Diskette Parameter Table (INT 0x1E)"""
+    step_rate_head_unload: Annotated[int, c_uint8]
+    head_load_dma: Annotated[int, c_uint8]
+    motor_off_delay: Annotated[int, c_uint8]
+    bytes_per_sector: Annotated[int, c_uint8]
+    sectors_per_track: Annotated[int, c_uint8]
+    gap_length: Annotated[int, c_uint8]
+    data_length: Annotated[int, c_uint8]
+    format_gap: Annotated[int, c_uint8]
+    format_fill: Annotated[int, c_uint8]
+    head_settle: Annotated[int, c_uint8]
+    motor_start: Annotated[int, c_uint8]
+
+
+class FixedDiskParameterTable(c_struct):
+    """Fixed Disk Parameter Table (INT 0x41)"""
+    cylinders: Annotated[int, c_uint16]
+    heads: Annotated[int, c_uint8]
+    reduced_write_current: Annotated[int, c_uint16]
+    write_precomp: Annotated[int, c_uint16]
+    ecc_burst: Annotated[int, c_uint8]
+    control_byte: Annotated[int, c_uint8]
+    timeout_1: Annotated[int, c_uint8]
+    timeout_2: Annotated[int, c_uint8]
+    timeout_3: Annotated[int, c_uint8]
+    landing_zone: Annotated[int, c_uint16]
+    sectors_per_track: Annotated[int, c_uint8]
+    reserved: Annotated[int, c_uint8]
+
 
 class BootloaderEmulator:
     """Emulator for x86 real mode bootloaders using Unicorn Engine"""
@@ -75,6 +238,7 @@ class BootloaderEmulator:
         self.setup_memory()
         self.load_disk_image()
         self.load_bootloader()
+        self.setup_bios_tables()
 
     def setup_memory(self):
         """Set up memory regions for the emulator"""
@@ -209,6 +373,33 @@ class BootloaderEmulator:
         self.uc.mem_write(address, data)
         self.uc.ctl_remove_cache(address, address + len(data))
 
+    def write_bda_to_memory(self):
+        """Write BDA structure to Unicorn memory at 0x400"""
+        if not self.bda:
+            return
+
+        bda_bytes = bytes(self.bda)
+        self.mem_write(0x400, bda_bytes)
+        print(f"[*] Initialized BIOS Data Area (BDA) at 0x00400 ({len(bda_bytes)} bytes)")
+        print(f"    Equipment: 0x{self.bda.equipment_list:04X}")
+        print(f"    Memory: {self.bda.memory_size_kb} KB")
+        print(f"    Video: Mode {self.bda.video_mode}, {self.bda.video_columns}x{self.bda.video_rows+1}")
+
+    def _write_ivt_entry(self, interrupt_number: int, segment: int, offset: int):
+        """Write a far pointer to an IVT (Interrupt Vector Table) entry
+
+        Each IVT entry is 4 bytes: 2 bytes offset + 2 bytes segment (little-endian)
+
+        Args:
+            interrupt_number: Interrupt number (0x00-0xFF)
+            segment: Segment address
+            offset: Offset within segment
+        """
+        ivt_address = interrupt_number * 4
+        # Write as little-endian: offset (2 bytes) + segment (2 bytes)
+        data = struct.pack('<HH', offset, segment)
+        self.mem_write(ivt_address, data)
+
     def load_bootloader(self):
         """Load the bootloader from the first 512 bytes of disk image at 0x7C00"""
         print(f"[*] Loading bootloader from disk image...")
@@ -227,6 +418,134 @@ class BootloaderEmulator:
         # Load bootloader at 0x7C00
         self.mem_write(self.boot_address, bootloader_code)
         print(f"  - Loaded at 0x{self.boot_address:04X}")
+
+    def create_bda(self):
+        """Create and initialize BIOS Data Area"""
+        self.bda = BIOSDataArea()
+
+        # Zero everything first
+        ctypes.memset(ctypes.addressof(self.bda), 0, ctypes.sizeof(self.bda))
+
+        # Essential memory configuration
+        self.bda.memory_size_kb = 640
+
+        # Equipment word - minimal configuration
+        # Bit 4-5: Video mode (10 = 80x25 color text)
+        equipment = 0x0020  # Minimal: video only
+
+        self.bda.equipment_list = equipment
+
+        # Video configuration (80x25 color text mode)
+        self.bda.video_mode = 0x03         # Mode 3: 80x25 color text
+        self.bda.video_columns = 80        # 80 columns
+        self.bda.video_page_size = 4096    # 4KB per page
+        self.bda.video_page_offset = 0     # Start at page 0
+        self.bda.video_port = 0x3D4        # Color card controller port
+        self.bda.active_page = 0           # Page 0
+        self.bda.video_rows = 25           # 25 rows (actually 24, 0-indexed)
+        self.bda.char_height = 8           # 8-pixel character height
+
+        # Cursor configuration
+        self.bda.cursor_pos[0] = 0x0000    # Page 0: row 0, col 0
+        self.bda.cursor_start_line = 6     # Cursor lines 6-7 (underline)
+        self.bda.cursor_end_line = 7
+
+        # Keyboard buffer (empty)
+        self.bda.kbd_buffer_head = 0x1E
+        self.bda.kbd_buffer_tail = 0x1E
+        self.bda.kbd_buffer_start = 0x1E   # Buffer at 0x041E
+        self.bda.kbd_buffer_end = 0x3E     # Buffer ends at 0x043E
+
+        # Hard disk configuration
+        self.bda.num_hard_disks = 1 if self.drive_number >= 0x80 else 0
+
+        # Timer: Start at 0
+        self.bda.timer_counter = 0
+
+        # Reset flag: Cold boot
+        self.bda.reset_flag = 0x0000
+
+        return self.bda
+
+    def setup_bios_tables(self):
+        """Initialize BIOS parameter tables and IVT entries"""
+        print(f"[*] Setting up BIOS parameter tables...")
+
+        # Initialize BDA if enabled
+        self.create_bda()
+        self.write_bda_to_memory()
+
+        # Create Diskette Parameter Table (DPT)
+        # Standard 1.44MB floppy parameters
+        dpt = DiskParameterTable()
+        dpt.step_rate_head_unload = 0xDF    # Step rate 3ms, head unload 240ms
+        dpt.head_load_dma = 0x02             # Head load 2ms, DMA mode
+        dpt.motor_off_delay = 0x25           # Motor off delay: 37 ticks (~2 seconds)
+        dpt.bytes_per_sector = 0x02          # 512 bytes per sector
+        dpt.sectors_per_track = 0x12         # 18 sectors per track (1.44MB)
+        dpt.gap_length = 0x1B                # Gap length: 27 bytes
+        dpt.data_length = 0xFF               # Data length (use bytes/sector field)
+        dpt.format_gap = 0x6C                # Format gap: 108 bytes
+        dpt.format_fill = 0xF6               # Format fill byte
+        dpt.head_settle = 0x0F               # Head settle: 15ms
+        dpt.motor_start = 0x08               # Motor start: 1 second
+
+        # Determine DPT parameters
+        # If floppy type or drive is floppy, use detected geometry; otherwise default to 1.44MB
+        if self.floppy_type or self.drive_number < 0x80:
+            # Use detected floppy geometry (will have been set by detect_geometry)
+            dpt_sectors = self.sectors_per_track
+            dpt_location = "detected floppy"
+        else:
+            # Default to 1.44MB when booting from HDD with no floppy specified
+            dpt_sectors = 18
+            dpt_location = "default 1.44MB"
+
+        # If we need to update sectors per track for detected floppy geometry
+        if dpt_location == "detected floppy" and self.floppy_type is None:
+            dpt.sectors_per_track = self.sectors_per_track
+
+        # Place DPT at 0xF000:0xEFC7 (traditional BIOS location)
+        DPT_ADDR = 0xFEFC7
+        self.mem_write(DPT_ADDR, bytes(dpt))
+        self._write_ivt_entry(0x1E, 0xF000, 0xEFC7)
+        print(f"  - INT 0x1E (DPT): {dpt_location} at 0x{DPT_ADDR:05X}")
+
+        # Handle hard disk parameter table (INT 0x41) if booting from HDD
+        if self.drive_number >= 0x80:
+            # Create Fixed Disk Parameter Table (FDPT) for first hard drive
+            fdpt = FixedDiskParameterTable()
+            fdpt.cylinders = self.cylinders
+            fdpt.heads = self.heads
+            fdpt.reduced_write_current = 0
+            fdpt.write_precomp = 0
+            fdpt.ecc_burst = 0
+            fdpt.control_byte = 0xC0
+            fdpt.timeout_1 = 0
+            fdpt.timeout_2 = 0
+            fdpt.timeout_3 = 0
+            fdpt.landing_zone = self.cylinders
+            fdpt.sectors_per_track = self.sectors_per_track
+            fdpt.reserved = 0
+
+            # Place FDPT at 0xF000:0xE401 (traditional location)
+            FDPT_ADDR = 0xFE401
+            self.mem_write(FDPT_ADDR, bytes(fdpt))
+            self._write_ivt_entry(0x41, 0xF000, 0xE401)
+            print(f"  - INT 0x41 (FDPT): Drive 0x{self.drive_number:02X} at 0x{FDPT_ADDR:05X}")
+            print(f"    Geometry: {self.cylinders}C x {self.heads}H x {self.sectors_per_track}S")
+
+            # INT 0x42 (second hard disk) - leave as NULL
+            self._write_ivt_entry(0x42, 0x0000, 0x0000)
+        else:
+            # Booting from floppy - no FDPT needed
+            # INT 0x41 and 0x42 left as NULL (zeros)
+            self._write_ivt_entry(0x41, 0x0000, 0x0000)
+            self._write_ivt_entry(0x42, 0x0000, 0x0000)
+
+        # Video tables (INT 0x1D, 0x1F) - leave as NULL
+        self._write_ivt_entry(0x1D, 0x0000, 0x0000)
+        self._write_ivt_entry(0x1F, 0x0000, 0x0000)
 
     def setup_cpu_state(self):
         """Initialize CPU registers for boot"""
@@ -370,7 +689,7 @@ class BootloaderEmulator:
 
             # Disassemble instruction
             try:
-                instr = next(self.cs.disasm(code, address, 1))
+                instr = next(Cs.disasm(self.cs, code, address, 1))
                 code = code[:instr.size]
             except StopIteration:
                 instr = None  # Unsupported instruction
@@ -482,6 +801,15 @@ class BootloaderEmulator:
         elif intno == 0x16:
             # Keyboard Services
             self.handle_int16(uc)
+        elif intno == 0x14:
+            # Serial Port Services
+            self.handle_int14(uc)
+        elif intno == 0x17:
+            # Printer Services
+            self.handle_int17(uc)
+        elif intno == 0x1A:
+            # Timer/Clock Services
+            self.handle_int1a(uc)
         else:
             if self.verbose:
                 print(f"[INT] Unhandled interrupt 0x{intno:02X} at 0x{ip:04X}")
@@ -707,19 +1035,12 @@ class BootloaderEmulator:
         if self.verbose:
             print(f"[INT 0x11] Get equipment list")
         # AX = equipment list word
-        # Bit 0: Floppy drive installed
-        # Bit 1: Math coprocessor
-        # Bit 2: PS/2 pointing device
-        # Bits 3-5: Number of serial ports
-        # Bit 6: Game port
-        # Bits 7-9: Number of parallel ports
-        # Bits 10-11: Video mode (00=EGA/VGA, 01=40-column color, 10=80-column color, 11=monochrome)
-        # Bit 12: PS/2 mouse installed
-        # Bit 13: Extended memory
 
-        # Default: no floppy, no coprocessor, VGA (80-col color)
-        equipment = 0x0000
-        equipment |= (0b10 << 10)  # 80-column color video
+        # Read from BDA if enabled, otherwise use default
+        equipment = self.bda.equipment_list
+        if self.verbose:
+            print(f"  - Equipment from BDA: 0x{equipment:04X}")
+
         uc.reg_write(UC_X86_REG_AX, equipment)
 
     def handle_int12(self, uc: Uc):
@@ -727,7 +1048,11 @@ class BootloaderEmulator:
         if self.verbose:
             print(f"[INT 0x12] Get memory size")
         # AX = memory size in KB (conventional memory, typically 640KB)
-        memory_size_kb = 640
+
+        memory_size_kb = self.bda.memory_size_kb
+        if self.verbose:
+            print(f"  - Memory size from BDA: {memory_size_kb} KB")
+
         uc.reg_write(UC_X86_REG_AX, memory_size_kb)
 
     def handle_int15(self, uc: Uc):
@@ -795,6 +1120,219 @@ class BootloaderEmulator:
                 print(f"[INT 0x16] Unhandled function AH=0x{ah:02X}")
             uc.emu_stop()
 
+    def handle_int14(self, uc: Uc):
+        """Handle INT 0x14 - Serial Port Services"""
+        ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
+        dx = uc.reg_read(UC_X86_REG_DX) & 0xFF  # DL = port number
+
+        if ah == 0x00:
+            # Initialize serial port
+            if self.verbose:
+                print(f"[INT 0x14] Initialize serial port DL=0x{dx:02X}")
+            # Return success: AH = 0 (initialized), AL = line status
+            # BIT 7: DCD (Data Carrier Detect), BIT 5: TX Buffer Empty
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF) | 0x2000)
+            # Clear CF (success)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x01:
+            # Write character to serial port
+            al = uc.reg_read(UC_X86_REG_AX) & 0xFF
+            if self.verbose:
+                print(f"[INT 0x14] Write character to serial port: 0x{al:02X} ({chr(al) if 32 <= al < 127 else '?'})")
+            else:
+                # Always output serial writes for visibility
+                if 32 <= al < 127 or al in (0x0A, 0x0D):
+                    print(f"[SERIAL] {chr(al)}", end="", flush=True)
+            # Return success in AH = 0 (ready), CF = 0
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF) | 0x0000)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x02:
+            # Read character from serial port
+            if self.verbose:
+                print(f"[INT 0x14] Read character from serial port")
+            # Return timeout (AH bit 7 set for error)
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF) | 0x8000)
+            # Set CF (error/timeout)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
+        elif ah == 0x03:
+            # Get serial port status
+            if self.verbose:
+                print(f"[INT 0x14] Get serial port status")
+            # AH = line status (TX buffer empty, etc.)
+            # AL = modem status
+            uc.reg_write(UC_X86_REG_AX, 0x6000)  # TX buffer empty, ready
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        else:
+            if self.verbose:
+                print(f"[INT 0x14] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
+
+    def handle_int17(self, uc: Uc):
+        """Handle INT 0x17 - Printer Services (return offline status)"""
+        ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
+        dx = uc.reg_read(UC_X86_REG_DX) & 0xFF  # DL = printer number
+
+        # Printer status byte format:
+        # Bit 0: Time out
+        # Bit 1: Unused
+        # Bit 2: End of paper
+        # Bit 3: Selected (1=online, 0=offline)
+        # Bit 4: I/O error
+        # Bit 5: Unused
+        # Bit 6: Unused
+        # Bit 7: Not busy (1=ready, 0=busy)
+        #
+        # Offline status: bits 3 and 7 = 0 (not selected, not ready)
+        offline_status = 0x00  # Offline/not ready/not selected
+
+        if ah == 0x00:
+            # Print character
+            if self.verbose:
+                al = uc.reg_read(UC_X86_REG_AX) & 0xFF
+                print(f"[INT 0x17] Print character 0x{al:02X} to printer {dx} (OFFLINE)")
+            # Return offline status in AH
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF) | (offline_status << 8))
+            # Set CF (error - printer offline)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
+        elif ah == 0x01:
+            # Initialize printer
+            if self.verbose:
+                print(f"[INT 0x17] Initialize printer {dx} (OFFLINE)")
+            # Return offline status in AH
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF) | (offline_status << 8))
+            # Set CF (error - printer offline)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
+        elif ah == 0x02:
+            # Get printer status
+            if self.verbose:
+                print(f"[INT 0x17] Get printer status for printer {dx} (OFFLINE)")
+            # Return offline status in AH
+            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF) | (offline_status << 8))
+            # Set CF (error - printer offline)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+
+        else:
+            if self.verbose:
+                print(f"[INT 0x17] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
+
+    def handle_int1a(self, uc: Uc):
+        """Handle INT 0x1A - Timer/Clock Services"""
+        ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
+
+        if ah == 0x00:
+            # Get system time (clock ticks since midnight)
+            # Returns: CX:DX = number of ticks (1 tick = 1/18.2 seconds)
+            if self.verbose:
+                print(f"[INT 0x1A] Get system time")
+            # Simulate a time value: 65536 ticks = ~1 hour at 18.2 ticks/sec
+            # Return a reasonable time like 2 hours into the day
+            ticks = 65536 * 2  # ~2 hours worth of ticks
+            cx = (ticks >> 16) & 0xFFFF
+            dx = ticks & 0xFFFF
+            ax = uc.reg_read(UC_X86_REG_AX) & 0xFF
+            uc.reg_write(UC_X86_REG_AX, ax)
+            uc.reg_write(UC_X86_REG_CX, cx)
+            uc.reg_write(UC_X86_REG_DX, dx)
+            # Clear CF
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x01:
+            # Set system time
+            if self.verbose:
+                cx = uc.reg_read(UC_X86_REG_CX)
+                dx = uc.reg_read(UC_X86_REG_DX)
+                print(f"[INT 0x1A] Set system time CX:DX=0x{cx:04X}:0x{dx:04X}")
+            # Just acknowledge, no real action needed
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x02:
+            # Get RTC time (hours, minutes, seconds in BCD)
+            # Returns: CH=hours, CL=minutes, DH=seconds, DL=daylight saving (0=standard)
+            if self.verbose:
+                print(f"[INT 0x1A] Get RTC time")
+            # Return a reasonable time: 08:30:45
+            hours_bcd = 0x08      # 8 in BCD
+            minutes_bcd = 0x30    # 30 in BCD
+            seconds_bcd = 0x45    # 45 in BCD
+            dst_flag = 0x00       # 0 = standard time
+            uc.reg_write(UC_X86_REG_CX, (hours_bcd << 8) | minutes_bcd)
+            uc.reg_write(UC_X86_REG_DX, (seconds_bcd << 8) | dst_flag)
+            # Clear CF
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x03:
+            # Set RTC time
+            if self.verbose:
+                cx = uc.reg_read(UC_X86_REG_CX)
+                dx = uc.reg_read(UC_X86_REG_DX)
+                print(f"[INT 0x1A] Set RTC time CX=0x{cx:04X}, DX=0x{dx:04X}")
+            # Just acknowledge
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x04:
+            # Get RTC date (year, month, day of month in BCD)
+            # Returns: CX=year, DH=month, DL=day
+            if self.verbose:
+                print(f"[INT 0x1A] Get RTC date")
+            # Return a reasonable date: 1990-01-15
+            year_bcd = 0x1990     # 1990 in BCD format
+            month_bcd = 0x01      # January in BCD
+            day_bcd = 0x15        # 15th in BCD
+            uc.reg_write(UC_X86_REG_CX, year_bcd)
+            uc.reg_write(UC_X86_REG_DX, (month_bcd << 8) | day_bcd)
+            # Clear CF
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x05:
+            # Set RTC date
+            if self.verbose:
+                cx = uc.reg_read(UC_X86_REG_CX)
+                dx = uc.reg_read(UC_X86_REG_DX)
+                print(f"[INT 0x1A] Set RTC date CX=0x{cx:04X}, DX=0x{dx:04X}")
+            # Just acknowledge
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x06:
+            # Set RTC alarm
+            if self.verbose:
+                print(f"[INT 0x1A] Set RTC alarm")
+            # Just acknowledge
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        elif ah == 0x07:
+            # Reset RTC alarm
+            if self.verbose:
+                print(f"[INT 0x1A] Reset RTC alarm")
+            # Just acknowledge
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+        else:
+            if self.verbose:
+                print(f"[INT 0x1A] Unhandled function AH=0x{ah:02X}")
+            uc.emu_stop()
+
     def hook_mem_invalid(self, uc: Uc, access, address, size, value, user_data):
         """Hook called on invalid memory access"""
         access_type = "READ" if access == UC_MEM_READ else "WRITE" if access == UC_MEM_WRITE else "EXEC"
@@ -811,10 +1349,24 @@ class BootloaderEmulator:
         ip = uc.reg_read(UC_X86_REG_IP)
 
         # Format access type
-        access_type = "READ" if access == UC_MEM_READ else "WRITE"
+        if access == UC_MEM_READ:
+            access_type = "IVT READ"
+        else:
+            access_type = "IVT WRITE"
+
+        data_vectors = {
+            0x1D: "Video Parameter Table (VPT)",
+            0x1E: "Diskette Parameter Table (DPT)",
+            0x1F: "Video Graphics Character Table (VGCT)",
+            0x41: "First Fixed Disk Parameter Table (FDPT)",
+            0x42: "Second Fixed Disk Parameter Table (FDPT)",
+        }
 
         # Format the trace line
-        line = f"[IVT {access_type}] 0x{address:04X} | size={size} | int={int_num:02X} | value=0x{value:X} | ip=0x{ip:04X}\n"
+        line = f"[{access_type}] 0x{address:04X} | size={size} | int={int_num:02X} | value=0x{value:X} | ip=0x{ip:04X}"
+        if int_num in data_vectors:
+            line += f"| desc = {data_vectors[int_num]}"
+        line += "\n"
 
         # Write to trace file unconditionally
         if self.trace_output:
@@ -823,6 +1375,53 @@ class BootloaderEmulator:
         # Also print to console if verbose
         if self.verbose:
             print(line.strip())
+
+        if int_num in data_vectors:
+            return True
+
+        if access == UC_MEM_WRITE:
+            uc.emu_stop()
+
+        return True
+
+    def hook_bda_access(self, uc: Uc, access, address, size, value, _user_data):
+        """Hook called on BDA region (0x0400-0x04FF) memory access"""
+
+        # Get current IP for context
+        ip = uc.reg_read(UC_X86_REG_IP)
+
+        # Format access type
+        if access == UC_MEM_READ:
+            access_type = "BDA READ"
+        else:
+            access_type = "BDA WRITE"
+
+        # Use introspection to find field at this offset within BDA
+        bda_offset = address - 0x0400  # Offset from start of BDA
+        field_info = BIOSDataArea.get_field_at_offset(bda_offset)
+
+        # Format the trace line
+        if field_info:
+            field_name, field_desc, field_size = field_info
+            line = f"[{access_type}] 0x{address:04X} | size={size} | field={field_name} | desc={field_desc} | value=0x{value:X} | ip=0x{ip:04X}"
+        else:
+            line = f"[{access_type}] 0x{address:04X} | size={size} | value=0x{value:X} | ip=0x{ip:04X}"
+
+        line += "\n"
+
+        # Write to trace file unconditionally
+        if self.trace_output:
+            self.trace_output.write(line)
+
+        # Also print to console if verbose
+        if self.verbose:
+            print(line.strip())
+
+        # Write to BDA is generally not allowed (except during initialization)
+        if access == UC_MEM_WRITE:
+            print(f"\n[!] BDA write protection violation at 0x{address:04X}")
+            uc.emu_stop()
+            return False
 
         return True
 
@@ -854,6 +1453,14 @@ class BootloaderEmulator:
             self.hook_ivt_access,
             begin=0x0000,
             end=0x03FF
+        )
+
+        # Add BDA-range-specific memory hook (0x0400-0x04FF)
+        self.uc.hook_add(
+            UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,
+            self.hook_bda_access,
+            begin=0x0400,
+            end=0x04FF
         )
 
         try:
@@ -1020,7 +1627,7 @@ def main():
         verbose=not args.quiet,
         geometry=geometry,
         floppy_type=args.floppy_type,
-        drive_number=drive_number
+        drive_number=drive_number,
     )
 
     emulator.setup_cpu_state()
