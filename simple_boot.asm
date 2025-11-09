@@ -45,9 +45,6 @@ loop_start:
     int 0x10
 
     ; Halt
-    hlt
-    jmp halt_loop
-
 halt_loop:
     hlt
     jmp halt_loop

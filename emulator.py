@@ -180,6 +180,88 @@ class FixedDiskParameterTable(c_struct):
     sectors_per_track: Annotated[int, c_uint8]
     reserved: Annotated[int, c_uint8]
 
+IVT_NAMES = {
+    # CPU Exceptions
+    0x00: "Divide by Zero",
+    0x01: "Single Step / Debug",
+    0x02: "Non-Maskable Interrupt (NMI)",
+    0x03: "Breakpoint",
+    0x04: "Overflow",
+    0x05: "BOUND Range Exceeded / Print Screen",
+    0x06: "Invalid Opcode (286+)",
+    0x07: "Coprocessor Not Available (286+)",
+    0x08: "Double Fault (286+) / IRQ0 System Timer (18.2 Hz)",
+    0x09: "Coprocessor Segment Overrun (286+) / IRQ1 Keyboard",
+    0x0A: "Invalid TSS (286+) / IRQ2 Cascade/Secondary PIC",
+    0x0B: "Segment Not Present (286+) / IRQ3 Serial Port 2 (COM2)",
+    0x0C: "Stack Fault (286+) / IRQ4 Serial Port 1 (COM1)",
+    0x0D: "General Protection Fault (286+) / IRQ5 Parallel Port 2 (LPT2) / Sound",
+    0x0E: "Page Fault (386+) / IRQ6 Floppy Disk Controller",
+    0x0F: "Reserved / IRQ7 Parallel Port 1 (LPT1)",
+    
+    # BIOS Services
+    0x10: "Video Services",
+    0x11: "Equipment Determination",
+    0x12: "Memory Size Determination",
+    0x13: "Disk Services (Floppy/Hard Disk)",
+    0x14: "Serial Communications Services",
+    0x15: "System Services / Cassette (PC/XT)",
+    0x16: "Keyboard Services",
+    0x17: "Printer Services",
+    0x18: "Execute ROM BASIC / Boot Failure",
+    0x19: "Bootstrap Loader / System Reboot",
+    0x1A: "Real-Time Clock (RTC) Services",
+    0x1B: "Ctrl-Break Handler",
+    0x1C: "Timer Tick (User Timer Interrupt)",
+    
+    # Parameter Tables (Pointers, not callable)
+    0x1D: "Video Parameter Table (VPT) Pointer",
+    0x1E: "Diskette Parameter Table (DPT) Pointer",
+    0x1F: "Video Graphics Character Table Pointer (chars 80h-FFh)",
+    
+    # DOS Interrupts
+    0x20: "DOS - Program Terminate",
+    0x21: "DOS - Function Dispatcher",
+    0x22: "DOS - Terminate Address",
+    0x23: "DOS - Ctrl-C Handler",
+    0x24: "DOS - Critical Error Handler",
+    0x25: "DOS - Absolute Disk Read",
+    0x26: "DOS - Absolute Disk Write",
+    0x27: "DOS - Terminate and Stay Resident (TSR)",
+    0x28: "DOS - Idle Interrupt",
+    0x29: "DOS - Fast Console Output",
+    0x2A: "DOS - Network / Critical Section",
+    0x2F: "DOS - Multiplex Interrupt",
+    
+    # Software Services
+    0x33: "Mouse Driver Services",
+    
+    # Extended BIOS
+    0x40: "Floppy Disk Handler (Relocated INT 13h)",
+    0x41: "Fixed Disk 0 Parameter Table Pointer (Hard Disk 0)",
+    0x42: "EGA/VGA Video Handler (Relocated INT 10h)",
+    0x43: "EGA/VGA Character Table Pointer (chars 00h-7Fh)",
+    0x44: "Novell NetWare",
+    0x46: "Fixed Disk 1 Parameter Table Pointer (Hard Disk 1)",
+    0x4A: "Real-Time Clock Alarm (AT+)",
+    0x4F: "Keyboard Intercept",
+    
+    # Extended Services
+    0x5C: "NetBIOS Interface",
+    0x67: "EMS (Expanded Memory Specification)",
+    0x68: "APM (Advanced Power Management)",
+    0x6C: "System Resume Vector (APM)",
+    
+    # IRQ 8-15 (AT+ via Secondary PIC)
+    0x70: "IRQ8 - Real-Time Clock Interrupt",
+    0x71: "IRQ9 - Redirected IRQ2 / LAN Adapter",
+    0x72: "IRQ10 - Reserved",
+    0x73: "IRQ11 - Reserved",
+    0x74: "IRQ12 - PS/2 Mouse",
+    0x75: "IRQ13 - Math Coprocessor Exception",
+    0x76: "IRQ14 - Hard Disk Controller",
+    0x77: "IRQ15 - Reserved / Secondary IDE",
+}
 
 class BootloaderEmulator:
     """Emulator for x86 real mode bootloaders using Unicorn Engine"""
@@ -467,6 +549,17 @@ class BootloaderEmulator:
 
         return self.bda
 
+    def create_int_stubs(self):
+        """Create INT N; IRET stubs in BIOS ROM area for all 256 interrupts"""
+        STUB_BASE = 0xF0000
+
+        for int_num in range(256):
+            stub_addr = STUB_BASE + (int_num * 4)
+            # CD XX = INT XX (2 bytes)
+            # CF    = IRET    (1 byte)
+            stub_code = bytes([0xCD, int_num, 0xCF])
+            self.mem_write(stub_addr, stub_code)
+
     def setup_bios_tables(self):
         """Initialize BIOS parameter tables and IVT entries"""
         print(f"[*] Setting up BIOS parameter tables...")
@@ -474,6 +567,16 @@ class BootloaderEmulator:
         # Initialize BDA if enabled
         self.create_bda()
         self.write_bda_to_memory()
+
+        # Create INT N; IRET stubs in BIOS ROM area
+        self.create_int_stubs()
+
+        # Populate ALL 256 IVT entries to point to BIOS stubs
+        for int_num in range(256):
+            stub_offset = int_num * 4
+            self._write_ivt_entry(int_num, 0xF000, stub_offset)
+
+        # Now overwrite specific IVT entries with data structure pointers
 
         # Create Diskette Parameter Table (DPT)
         # Standard 1.44MB floppy parameters
@@ -543,9 +646,10 @@ class BootloaderEmulator:
             self._write_ivt_entry(0x41, 0x0000, 0x0000)
             self._write_ivt_entry(0x42, 0x0000, 0x0000)
 
-        # Video tables (INT 0x1D, 0x1F) - leave as NULL
+        # Video tables (INT 0x1D, 0x1F, 0x43) - leave as NULL
         self._write_ivt_entry(0x1D, 0x0000, 0x0000)
         self._write_ivt_entry(0x1F, 0x0000, 0x0000)
+        self._write_ivt_entry(0x43, 0x0000, 0x0000)
 
     def setup_cpu_state(self):
         """Initialize CPU registers for boot"""
@@ -676,10 +780,18 @@ class BootloaderEmulator:
 
         return None, None
 
-    def hook_code(self, uc: Uc, address, size, user_data):
+    def hook_code(self, uc: Uc, address: int, size: int, user_data):
         """Hook called before each instruction execution"""
         try:
             self.instruction_count += 1
+
+            cs = uc.reg_read(UC_X86_REG_CS)
+            ip = uc.reg_read(UC_X86_REG_IP)
+            physical_addr = (cs << 4) + ip
+
+            if address != physical_addr:
+                print(f"\n[*] Physical address mismatch: {hex(address)} != {hex(physical_addr)} ({cs:04x}:{ip:04x})")
+                uc.emu_stop()
 
             # Read instruction bytes
             try:
@@ -695,7 +807,7 @@ class BootloaderEmulator:
                 instr = None  # Unsupported instruction
 
             # Build trace line: address|instruction|registers
-            line = f"0x{address:04x}|{code.hex().ljust(10)}|"
+            line = f"{cs:04x}:{ip:04x}={address: 6x}|{code.hex().ljust(10)}|"
 
             if instr is not None:
                 # Add disassembled instruction
@@ -779,10 +891,9 @@ class BootloaderEmulator:
             traceback.print_exc()
             uc.emu_stop()
 
-    def hook_interrupt(self, uc: Uc, intno, user_data):
-        """Hook called on interrupt instructions"""
-        ip = uc.reg_read(UC_X86_REG_IP)
-
+    def handle_bios_interrupt(self, uc: Uc, intno: int):
+        """Route interrupt to appropriate BIOS service handler"""
+        print(f"[*] Handling BIOS interrupt 0x{intno:02X} -> {IVT_NAMES.get(intno, 'Unknown')}")
         if intno == 0x10:
             # Video Services
             self.handle_int10(uc)
@@ -795,15 +906,15 @@ class BootloaderEmulator:
         elif intno == 0x13:
             # Disk Services
             self.handle_int13(uc)
+        elif intno == 0x14:
+            # Serial Port Services
+            self.handle_int14(uc)
         elif intno == 0x15:
             # System Services
             self.handle_int15(uc)
         elif intno == 0x16:
             # Keyboard Services
             self.handle_int16(uc)
-        elif intno == 0x14:
-            # Serial Port Services
-            self.handle_int14(uc)
         elif intno == 0x17:
             # Printer Services
             self.handle_int17(uc)
@@ -811,9 +922,60 @@ class BootloaderEmulator:
             # Timer/Clock Services
             self.handle_int1a(uc)
         else:
+            # Unhandled BIOS interrupt
+            ip = uc.reg_read(UC_X86_REG_IP)
             if self.verbose:
-                print(f"[INT] Unhandled interrupt 0x{intno:02X} at 0x{ip:04X}")
+                print(f"[INT] Unhandled BIOS interrupt 0x{intno:02X} at 0x{ip:04X}")
             uc.emu_stop()
+
+    def hook_interrupt(self, uc: Uc, intno, user_data):
+        """Hook called before INT instruction executes"""
+        # Read current CS:IP
+        # NOTE: Unicorn has already advanced IP past the INT instruction (2 bytes)
+        # So the actual INT location is IP - 2
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ip = uc.reg_read(UC_X86_REG_IP)
+        int_location_ip = ip - 2  # Where the INT actually is
+
+        # Calculate physical address of INT instruction
+        physical_addr = (cs << 4) + int_location_ip
+
+        # BIOS stub range: 0xF0000 - 0xF0400 (256 interrupts * 4 bytes each = 1024 bytes)
+        STUB_BASE = 0xF0000
+        STUB_END = 0xF0400
+
+        # Read IVT entry for this interrupt
+        ivt_addr = intno * 4
+        ivt_offset = int.from_bytes(uc.mem_read(ivt_addr, 2), 'little')
+        ivt_segment = int.from_bytes(uc.mem_read(ivt_addr + 2, 2), 'little')
+
+        # Check if we're executing from BIOS stub region
+        # If so, always handle in Python regardless of IVT contents
+        if STUB_BASE <= physical_addr < STUB_END:
+            # Executing from BIOS stub - handle in Python
+            self.handle_bios_interrupt(uc, intno)
+            # IP is already advanced past the INT, so we're good
+        else:
+            # Not from stub - manually push interrupt frame and jump to IVT handler
+            # NOTE: IP has already been advanced past the INT instruction by Unicorn
+            sp = uc.reg_read(UC_X86_REG_SP)
+            ss = uc.reg_read(UC_X86_REG_SS)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS) & 0xFFFF
+
+            # Push FLAGS, CS, IP (return address points AFTER INT instruction)
+            # IP is already pointing after the INT, so just push it as-is
+            sp -= 2
+            self.mem_write(ss * 16 + sp, flags.to_bytes(2, 'little'))
+            sp -= 2
+            self.mem_write(ss * 16 + sp, cs.to_bytes(2, 'little'))
+            sp -= 2
+            self.mem_write(ss * 16 + sp, ip.to_bytes(2, 'little'))
+
+            uc.reg_write(UC_X86_REG_SP, sp)
+
+            # Jump to IVT handler
+            uc.reg_write(UC_X86_REG_CS, ivt_segment)
+            uc.reg_write(UC_X86_REG_IP, ivt_offset)
 
     def handle_int10(self, uc: Uc):
         """Handle INT 0x10 - Video Services"""
@@ -1354,18 +1516,10 @@ class BootloaderEmulator:
         else:
             access_type = "IVT WRITE"
 
-        data_vectors = {
-            0x1D: "Video Parameter Table (VPT)",
-            0x1E: "Diskette Parameter Table (DPT)",
-            0x1F: "Video Graphics Character Table (VGCT)",
-            0x41: "First Fixed Disk Parameter Table (FDPT)",
-            0x42: "Second Fixed Disk Parameter Table (FDPT)",
-        }
-
         # Format the trace line
         line = f"[{access_type}] 0x{address:04X} | size={size} | int={int_num:02X} | value=0x{value:X} | ip=0x{ip:04X}"
-        if int_num in data_vectors:
-            line += f"| desc = {data_vectors[int_num]}"
+        if int_num in IVT_NAMES:
+            line += f"| name = {IVT_NAMES[int_num]}"
         line += "\n"
 
         # Write to trace file unconditionally
@@ -1375,12 +1529,6 @@ class BootloaderEmulator:
         # Also print to console if verbose
         if self.verbose:
             print(line.strip())
-
-        if int_num in data_vectors:
-            return True
-
-        if access == UC_MEM_WRITE:
-            uc.emu_stop()
 
         return True
 
@@ -1506,7 +1654,7 @@ class BootloaderEmulator:
         # Get final register state
         ip = self.uc.reg_read(UC_X86_REG_IP)
         cs = self.uc.reg_read(UC_X86_REG_CS)
-        print(f"Final CS:IP: 0x{cs:04X}:0x{ip:04X}")
+        print(f"Final CS:IP: {cs:04x}:{ip:04x}")
 
         print(f"\nFinal register state:")
         regs = [
