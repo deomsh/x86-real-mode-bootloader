@@ -1,0 +1,16 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "emulator.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/emulator.py",
+            "console": "integratedTerminal",
+            "args": "HDD_60MB_FAT16_MDOS40_BOOTCODE_MSDOS622_SYSTEM.img"
+        }
+    ]
+}

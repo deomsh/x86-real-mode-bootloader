@@ -49,6 +49,7 @@ git config --global core.crlf false
 - `io.ld` - Linker script for IO.SYS (max 3 sectors)
 - `i8086.xml`, [`i386-32bit.xml`](https://github.com/qemu/qemu/blob/master/gdb-xml/i386-32bit.xml) - GDB architecture definitions for 16-bit debugging
 - `real-mode.gdb` - GDB script for debugging real mode code
+- `emulator.py` - Python emulator using unicorn for step-by-step tracing
 
 ## Prerequisites
 
@@ -83,6 +84,18 @@ make disasm     # Disassemble boot.elf
 make dostest.img # Create test image with DOS files (not shipped)
 ```
 
+## Python Emulator
+
+This project includes a Python-based emulator using [Unicorn Engine](https://www.unicorn-engine.org/) and [Capstone](https://www.capstone-engine.org/) that provides step-by-step instruction tracing with BIOS interrupt emulation:
+
+```sh
+# Install dependencies
+pip install unicorn capstone
+
+# Run emulator with disk image
+python3 emulator.py boot.img
+```
+
 ## Debugging
 
 ```sh
@@ -106,7 +119,7 @@ IP:7C00 FLAGS:0202
 => 0x7c00:      jmp    0x7caa
 
 Breakpoint 1, 0x00007c00 in ?? ()
-(gdb) 
+(gdb)
 ```
 
 ## Links

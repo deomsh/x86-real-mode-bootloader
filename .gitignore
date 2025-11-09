@@ -5,5 +5,19 @@
 *.raw
 *.log
 *.map
+*.bin
 boot
 *.qcow2
+trace.json
+trace*.txt
+
+ Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv

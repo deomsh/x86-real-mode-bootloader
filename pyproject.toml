@@ -1,0 +1,10 @@
+[project]
+name = "x86-real-mode-bootloader"
+version = "0.1.0"
+description = "Boot loader for real mode written in C."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "capstone>=5.0.6",
+    "unicorn>=2.1.4",
+]

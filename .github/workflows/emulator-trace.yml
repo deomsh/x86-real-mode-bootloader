@@ -1,0 +1,125 @@
+name: Bootloader Emulator Trace
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  emulate-and-trace:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/mrexodia/x86-real-mode-bootloader:latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Compile simple bootloader
+      run: |
+        echo "=========================================="
+        echo "Compiling simple_boot.asm..."
+        echo "=========================================="
+        nasm -f bin simple_boot.asm -o simple_boot.bin
+        ls -lh simple_boot.bin
+        echo "Verifying boot signature..."
+        xxd -l 512 -c 16 simple_boot.bin | tail -2
+
+    - name: Compile IVT test bootloader
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Compiling test_ivt.asm..."
+        echo "=========================================="
+        nasm -f bin test_ivt.asm -o test_ivt.bin
+        ls -lh test_ivt.bin
+        echo "Verifying boot signature..."
+        xxd -l 512 -c 16 test_ivt.bin | tail -2
+
+    - name: Compile real FAT bootloader
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Compiling boot.c (FAT bootloader)..."
+        echo "=========================================="
+        make boot boot.img
+        ls -lh boot boot.img
+        echo "Boot sector signature:"
+        xxd -l 512 -c 16 boot | tail -2
+        echo "Boot image info:"
+        file boot.img
+
+    - name: Run emulator on simple bootloader
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Running Emulator on simple_boot.bin"
+        echo "=========================================="
+        python3 emulator.py simple_boot.bin -o trace_simple.txt -d 0x00
+
+    - name: Run emulator on IVT test bootloader
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Running Emulator on test_ivt.bin"
+        echo "=========================================="
+        python3 emulator.py test_ivt.bin -o trace_ivt.txt -d 0x00
+
+    - name: Run emulator on FAT bootloader
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Running Emulator on boot.img (FAT bootloader)"
+        echo "=========================================="
+        python3 emulator.py boot.img -o trace_fat.txt -d 0x00
+
+    - name: Upload trace artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: emulator-traces
+        path: |
+          trace_simple.txt
+          trace_ivt.txt
+          trace_fat.txt
+        retention-days: 30
+
+    - name: Display execution statistics
+      run: |
+        echo ""
+        echo "=========================================="
+        echo "Execution Statistics"
+        echo "=========================================="
+        echo ""
+        echo "Simple bootloader:"
+        echo "  Instructions executed: $(wc -l < trace_simple.txt)"
+        echo "  First 30 instructions:"
+        head -30 trace_simple.txt
+        echo ""
+        echo "=========================================="
+        echo ""
+        echo "IVT test bootloader:"
+        echo "  Instructions executed: $(wc -l < trace_ivt.txt)"
+        echo "  INT 0x10 calls: $(grep -c 'int 0x10' trace_ivt.txt || echo 0)"
+        echo "  INT 0x13 calls: $(grep -c 'int 0x13' trace_ivt.txt || echo 0)"
+        echo ""
+        echo "  First 50 instructions:"
+        head -50 trace_ivt.txt
+        echo ""
+        echo "  Last 20 instructions:"
+        tail -20 trace_ivt.txt
+        echo ""
+        echo "=========================================="
+        echo ""
+        echo "FAT bootloader:"
+        echo "  Instructions executed: $(wc -l < trace_fat.txt)"
+        echo "  INT 0x10 calls: $(grep -c 'int 0x10' trace_fat.txt || echo 0)"
+        echo "  INT 0x13 calls: $(grep -c 'int 0x13' trace_fat.txt || echo 0)"
+        echo "  Memory accesses: $(grep -c 'mem\[' trace_fat.txt || echo 0)"
+        echo ""
+        echo "  First 50 instructions:"
+        head -50 trace_fat.txt
+        echo ""
+        echo "  Last 20 instructions:"
+        tail -20 trace_fat.txt
