@@ -11,7 +11,7 @@ boot.qcow2: boot.img
 boot.img: boot io.sys
 	dd if=/dev/zero of=$@ bs=20M count=1
 	mformat -i $@ -B boot ::
-	mcopy -i $@ -w boot.c io.c io.sys boot.ld ::
+	mcopy -i $@ boot.c io.c io.sys boot.ld ::
 
 boot: boot.elf
 	$(OBJCOPY) -O binary boot.elf boot
@@ -102,3 +102,8 @@ msboot.bin: MSBOOT.nasm
 
 oldmbr.bin: oldmbr.asm
 	nasm -f bin oldmbr.asm -o oldmbr.bin
+
+simple_boot.bin: simple_boot.asm
+	nasm -f bin simple_boot.asm -o simple_boot.bin
+
+

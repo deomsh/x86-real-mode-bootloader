@@ -57,12 +57,7 @@ typedef uint8_t __far* farptr_t;
 
 __attribute__((noreturn, section(".text.start"))) void _start()
 {
-    puts("IVT:\r\n");
-    dump((uint8_t*)0x0000, 0x400);
-    puts("BDA:\r\n");
-    dump((uint8_t*)0x400, 0x100);
-    farptr_t* ivt = (farptr_t*)0x0000;
-    puts("EGA characters:\r\n");
-    dump_far(ivt[0x1F], 0x16); // dump INT 0x1E vector table
+    puts("Hello from IO.SYS!\r\n");
+//    dump((uint8_t*)0x0700, 200);
     while(1);
 }
