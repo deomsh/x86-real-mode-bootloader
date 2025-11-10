@@ -713,7 +713,7 @@ class BootloaderEmulator:
             return self.uc.reg_read(reg_map[reg_name_lower])
         raise KeyError(f"Register not found: '{reg_name_lower}'")
 
-    def _get_regs(self, instr, include_write=False):
+    def _get_regs(self, instr: CsInsn, include_write=False):
         """Extract relevant registers from instruction operands using Capstone metadata"""
         regs = OrderedDict()
         operands = instr.operands
@@ -725,11 +725,9 @@ class BootloaderEmulator:
 
                 # Register operands - use access metadata to determine read/write
                 if op.type == X86_OP_REG:
-                    # Check if operand is read (not write-only)
-                    is_read = (op.access & CS_AC_READ) != 0
-                    is_write_only = (op.access == CS_AC_WRITE)
-
-                    if is_read or (is_write_only and include_write):
+                    # NOTE: `push ds` has op.access == 0, but it is read, so we exclude
+                    # write-only
+                    if op.access != CS_AC_WRITE or include_write:
                         regs[self.reg_name(op.value.reg)] = None
 
                 # Memory operands - track base and index registers
@@ -818,6 +816,7 @@ class BootloaderEmulator:
             try:
                 instr = next(Cs.disasm(self.cs, code, address, 1))
                 code = code[:instr.size]
+                
             except StopIteration:
                 instr = None  # Unsupported instruction
 
@@ -847,9 +846,16 @@ class BootloaderEmulator:
                             if op.type == X86_OP_MEM:
                                 mem_size = op.size
                                 break
-
+                    
+                        
                         # Read memory value
-                        if mem_size == 1:
+                        if instr.id in [X86_INS_LDS, X86_INS_LES, X86_INS_LFS, X86_INS_LGS, X86_INS_LSS]:
+                            offset_val = uc.mem_read(mem_addr, 2)
+                            segment_val = uc.mem_read(mem_addr + 2, 2)
+                            segment = struct.unpack('<H', segment_val)[0]
+                            offset = struct.unpack('<H', offset_val)[0]
+                            line += f"|mem[0x{mem_addr:x}]={segment:04x}:{offset:04x}"
+                        elif mem_size == 1:
                             mem_val = uc.mem_read(mem_addr, 1)[0]
                             line += f"|mem[0x{mem_addr:x}]=0x{mem_val:02x}"
                         elif mem_size == 2:
