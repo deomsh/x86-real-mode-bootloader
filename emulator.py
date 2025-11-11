@@ -529,6 +529,8 @@ class BootloaderEmulator:
         # Equipment word - minimal configuration
         # Bit 4-5: Video mode (10 = 80x25 color text)
         equipment = 0x0020  # Minimal: video only
+        if self.drive_number < 0x80:
+            equipment |= 0x0001  # Bit 0: Floppy drive installed
 
         self.bda.equipment_list = equipment
 
@@ -1120,6 +1122,14 @@ class BootloaderEmulator:
 
         elif ah == 0x01:
             # Get disk status
+            if dl != self.drive_number:
+                # Drive doesn't exist - return error
+                if self.verbose:
+                    print(f"[INT 0x13] Get disk status for drive 0x{dl:02X} - drive not found")
+                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
+                return
             if self.verbose:
                 print(f"[INT 0x13] Get disk status for drive 0x{dl:02X}")
             # Return status 0 (no error)
@@ -1129,6 +1139,14 @@ class BootloaderEmulator:
 
         elif ah == 0x02:
             # Read sectors (CHS addressing)
+            if dl != self.drive_number:
+                # Drive doesn't exist - return error
+                if self.verbose:
+                    print(f"[INT 0x13] Read sectors for drive 0x{dl:02X} - drive not found")
+                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
+                return
             al = uc.reg_read(UC_X86_REG_AX) & 0xFF  # Number of sectors
             ch = (uc.reg_read(UC_X86_REG_CX) >> 8) & 0xFF  # Cylinder (low 8 bits)
             cl = uc.reg_read(UC_X86_REG_CX) & 0xFF  # Sector (bits 0-5) | Cylinder high (bits 6-7)
@@ -1190,6 +1208,14 @@ class BootloaderEmulator:
 
         elif ah == 0x03:
             # Write sectors (CHS addressing)
+            if dl != self.drive_number:
+                # Drive doesn't exist - return error
+                if self.verbose:
+                    print(f"[INT 0x13] Write sectors for drive 0x{dl:02X} - drive not found")
+                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
+                return
             al = uc.reg_read(UC_X86_REG_AX) & 0xFF  # Number of sectors
             ch = (uc.reg_read(UC_X86_REG_CX) >> 8) & 0xFF  # Cylinder (low 8 bits)
             cl = uc.reg_read(UC_X86_REG_CX) & 0xFF  # Sector (bits 0-5) | Cylinder high (bits 6-7)
@@ -1254,6 +1280,14 @@ class BootloaderEmulator:
 
         elif ah == 0x08:
             # Get drive parameters
+            if dl != self.drive_number:
+                # Drive doesn't exist - return error
+                if self.verbose:
+                    print(f"[INT 0x13] Get drive parameters for drive 0x{dl:02X} - drive not found")
+                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
+                return
             if self.verbose:
                 print(f"[INT 0x13] Get drive parameters for drive 0x{dl:02X}")
 
@@ -1333,6 +1367,14 @@ class BootloaderEmulator:
                 uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
         elif ah == 0x15:
             # Get disk type
+            if dl != self.drive_number:
+                # Drive doesn't exist - return error
+                if self.verbose:
+                    print(f"[INT 0x13] Get disk type for drive 0x{dl:02X} - drive not found")
+                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
+                return
             if self.verbose:
                 print(f"[INT 0x13] Get disk type for drive 0x{dl:02X}")
             # AH=03 means fixed disk installed
