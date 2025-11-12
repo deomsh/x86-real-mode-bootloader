@@ -143,7 +143,7 @@ class BIOSDataArea(c_struct):
     char_height: Annotated[int, c_uint16]                 # 0x085: Character height in scan lines
     video_control: Annotated[int, c_uint8]                # 0x087: Video display control flags
     video_switches: Annotated[int, c_uint8]               # 0x088: Video display switch settings
-    
+
     # Extended BDA fields (PC/AT and later)
     video_modeset_ctrl: Annotated[int, c_uint8]           # 0x089: Video mode set control options
     video_dcc_index: Annotated[int, c_uint8]              # 0x08A: Display Combination Code index
@@ -212,7 +212,7 @@ IVT_NAMES = {
     0x0D: "General Protection Fault (286+) / IRQ5 Parallel Port 2 (LPT2) / Sound",
     0x0E: "Page Fault (386+) / IRQ6 Floppy Disk Controller",
     0x0F: "Reserved / IRQ7 Parallel Port 1 (LPT1)",
-    
+
     # BIOS Services
     0x10: "Video Services",
     0x11: "Equipment Determination",
@@ -227,12 +227,12 @@ IVT_NAMES = {
     0x1A: "Real-Time Clock (RTC) Services",
     0x1B: "Ctrl-Break Handler",
     0x1C: "Timer Tick (User Timer Interrupt)",
-    
+
     # Parameter Tables (Pointers, not callable)
     0x1D: "Video Parameter Table (VPT) Pointer",
     0x1E: "Diskette Parameter Table (DPT) Pointer",
     0x1F: "Video Graphics Character Table Pointer (chars 80h-FFh)",
-    
+
     # DOS Interrupts
     0x20: "DOS - Program Terminate",
     0x21: "DOS - Function Dispatcher",
@@ -246,10 +246,10 @@ IVT_NAMES = {
     0x29: "DOS - Fast Console Output",
     0x2A: "DOS - Network / Critical Section",
     0x2F: "DOS - Multiplex Interrupt",
-    
+
     # Software Services
     0x33: "Mouse Driver Services",
-    
+
     # Extended BIOS
     0x40: "Floppy Disk Handler (Relocated INT 13h)",
     0x41: "Fixed Disk 0 Parameter Table Pointer (Hard Disk 0)",
@@ -259,13 +259,13 @@ IVT_NAMES = {
     0x46: "Fixed Disk 1 Parameter Table Pointer (Hard Disk 1)",
     0x4A: "Real-Time Clock Alarm (AT+)",
     0x4F: "Keyboard Intercept",
-    
+
     # Extended Services
     0x5C: "NetBIOS Interface",
     0x67: "EMS (Expanded Memory Specification)",
     0x68: "APM (Advanced Power Management)",
     0x6C: "System Resume Vector (APM)",
-    
+
     # IRQ 8-15 (AT+ via Secondary PIC)
     0x70: "IRQ8 - Real-Time Clock Interrupt",
     0x71: "IRQ9 - Redirected IRQ2 / LAN Adapter",
@@ -752,7 +752,7 @@ class BootloaderEmulator:
                     regs[self.reg_name(reg)] = None
 
         return regs
-    
+
     def reg_name(self, reg_id: int):
         name = self.cs.reg_name(reg_id)
         if name is None:
@@ -848,8 +848,8 @@ class BootloaderEmulator:
                             if op.type == X86_OP_MEM:
                                 mem_size = op.size
                                 break
-                    
-                        
+
+
                         # Read memory value
                         if instr.id in [X86_INS_LDS, X86_INS_LES, X86_INS_LFS, X86_INS_LGS, X86_INS_LSS]:
                             offset_val = uc.mem_read(mem_addr, 2)
