@@ -396,8 +396,8 @@ class BootloaderEmulator:
 
         # Method 4: MBR partition table (QEMU's guess_disk_lchs algorithm)
         # Read first 512 bytes (MBR)
-        if len(self.disk_image) >= 512:
-            mbr = self.disk_image[:512]
+        if self.disk_size >= 512:
+            mbr = self.sector_read(0)
 
             # Check for valid MBR signature (0x55AA at offset 510-511)
             if mbr[510] == 0x55 and mbr[511] == 0xAA:
@@ -439,6 +439,25 @@ class BootloaderEmulator:
             self.cylinders += 1
         self.geometry_method = "Fallback (QEMU default: 16H/63S)"
 
+    def sector_read(self, lba: int) -> bytes:
+        """Read sectors from disk image using LBA addressing"""
+        if lba * 512 >= self.disk_size:
+            raise ValueError(f"Disk read out of bounds: LBA={lba}, disk_size={self.disk_size}")
+        if lba in self.disk_cache:
+            return self.disk_cache[lba]
+        self.disk_fd.seek(lba * 512)
+        sector_data = self.disk_fd.read(512)
+        self.disk_cache[lba] = sector_data
+        return sector_data
+
+    def sector_write(self, lba: int, data: bytes):
+        """Write sectors to disk image using LBA addressing (COW)"""
+        if lba * 512 >= self.disk_size:
+            raise ValueError(f"Disk write out of bounds: LBA={lba}, disk_size={self.disk_size}")
+        if len(data) != 512:
+            raise ValueError(f"Sector write data must be exactly 512 bytes, got {len(data)} bytes")
+        self.disk_cache[lba] = data
+
     def load_disk_image(self):
         """Load disk image"""
         print(f"[*] Loading disk image from {self.disk_image_path}...")
@@ -447,10 +466,12 @@ class BootloaderEmulator:
             print(f"Error: Disk image not found: {self.disk_image_path}")
             sys.exit(1)
 
-        with open(self.disk_image_path, 'rb') as f:
-            self.disk_image = bytearray(f.read())
+        # Open disk image file
+        self.disk_fd = open(self.disk_image_path, 'rb')
+        self.disk_fd.seek(0, 2)
+        self.disk_size = self.disk_fd.tell()
+        self.disk_cache: OrderedDict[int, bytes] = OrderedDict()
 
-        self.disk_size = len(self.disk_image)
         print(f"  - Disk image size: {self.disk_size} bytes ({self.disk_size // 1024} KB)")
 
         # Detect disk geometry
@@ -503,7 +524,7 @@ class BootloaderEmulator:
         print(f"[*] Loading bootloader from disk image...")
 
         # Load boot sector from first 512 bytes of disk image
-        bootloader_code = self.disk_image[:512]
+        bootloader_code = self.sector_read(0)
         print(f"  - Loaded boot sector from disk image (512 bytes)")
 
         # Verify boot signature (0xAA55 at offset 510-511)
@@ -512,6 +533,7 @@ class BootloaderEmulator:
             print(f"  ✓ Valid boot signature: 0x{signature:04X}")
         else:
             print(f"  ⚠ Warning: Invalid boot signature: 0x{signature:04X} (expected 0xAA55)")
+            sys.exit(1)
 
         # Load bootloader at 0x7C00
         self.mem_write(self.boot_address, bootloader_code)
@@ -1138,359 +1160,308 @@ class BootloaderEmulator:
 
     def handle_int13(self, uc: Uc):
         """Handle INT 0x13 - Disk Services"""
-        ah = (uc.reg_read(UC_X86_REG_AX) >> 8) & 0xFF
-        dl = uc.reg_read(UC_X86_REG_DX) & 0xFF
+        # Read all registers at the beginning
+        ax = uc.reg_read(UC_X86_REG_AX)
+        ah = (ax >> 8) & 0xFF
+        al = ax & 0xFF
 
-        if ah == 0x00:
+        bx = uc.reg_read(UC_X86_REG_BX)
+        cx = uc.reg_read(UC_X86_REG_CX)
+        ch = (cx >> 8) & 0xFF
+        cl = cx & 0xFF
+
+        dx = uc.reg_read(UC_X86_REG_DX)
+        dh = (dx >> 8) & 0xFF
+        dl = dx & 0xFF
+
+        si = uc.reg_read(UC_X86_REG_SI)
+        es = uc.reg_read(UC_X86_REG_ES)
+        ds = uc.reg_read(UC_X86_REG_DS)
+        flags = uc.reg_read(UC_X86_REG_EFLAGS)
+
+        # Default return values
+        ret_ah = 0x00  # Success by default
+        ret_al = al    # Preserve AL by default
+        error = False  # Clear carry by default (success)
+
+        # Validate drive number for most operations
+        if ah not in [0x00, 0x08, 0x15, 0x41, 0x48] and dl != self.drive_number:
+            if self.verbose:
+                print(f"[INT 0x13] Function AH=0x{ah:02X} for drive 0x{dl:02X} - drive not found")
+            ret_ah = 0x80  # Drive not ready/timeout
+            error = True
+
+        elif ah == 0x00:
             # Reset disk system
             if self.verbose:
                 print(f"[INT 0x13] Reset disk system for drive 0x{dl:02X}")
-            # Clear CF to indicate success
-            flags = uc.reg_read(UC_X86_REG_EFLAGS)
-            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+            ret_ah = 0x00
 
         elif ah == 0x01:
             # Get disk status
-            if dl != self.drive_number:
-                # Drive doesn't exist - return error
-                if self.verbose:
-                    print(f"[INT 0x13] Get disk status for drive 0x{dl:02X} - drive not found")
-                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
-                return
             if self.verbose:
                 print(f"[INT 0x13] Get disk status for drive 0x{dl:02X}")
-            # Return status 0 (no error)
-            uc.reg_write(UC_X86_REG_AX, 0)
-            flags = uc.reg_read(UC_X86_REG_EFLAGS)
-            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+            ret_ah = 0x00
+            ret_al = 0x00  # Last operation status (no error)
 
         elif ah == 0x02:
             # Read sectors (CHS addressing)
-            if dl != self.drive_number:
-                # Drive doesn't exist - return error
-                if self.verbose:
-                    print(f"[INT 0x13] Read sectors for drive 0x{dl:02X} - drive not found")
-                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
-                return
-            al = uc.reg_read(UC_X86_REG_AX) & 0xFF  # Number of sectors
-            ch = (uc.reg_read(UC_X86_REG_CX) >> 8) & 0xFF  # Cylinder (low 8 bits)
-            cl = uc.reg_read(UC_X86_REG_CX) & 0xFF  # Sector (bits 0-5) | Cylinder high (bits 6-7)
-            dh = (uc.reg_read(UC_X86_REG_DX) >> 8) & 0xFF  # Head
-
-            # Parse CHS values
-            cylinder = ch | ((cl & 0xC0) << 2)  # Cylinder is 10 bits
-            sector = cl & 0x3F  # Sector is bits 0-5 (1-based)
+            cylinder = ch | ((cl & 0xC0) << 2)
+            sector = cl & 0x3F
             head = dh
-
-            # Buffer address from ES:BX
-            es = uc.reg_read(UC_X86_REG_ES)
-            bx = uc.reg_read(UC_X86_REG_BX)
+            sectors_to_read = al
             buffer_addr = (es << 4) + bx
 
             if self.verbose:
                 print(f"[INT 0x13] Read sectors (CHS) for drive 0x{dl:02X}")
-                print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={al}")
+                print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={sectors_to_read}")
                 print(f"  - Buffer: 0x{es:04X}:0x{bx:04X} (0x{buffer_addr:05X})")
 
-            try:
-                # Convert CHS to LBA: LBA = (C * heads + H) * sectors_per_track + (S - 1)
-                lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
+            lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
 
+            if self.verbose:
+                print(f"  - Converted to LBA: {lba}")
+
+            disk_offset = lba * 512
+            bytes_to_read = sectors_to_read * 512
+
+            if disk_offset + bytes_to_read > self.disk_size:
                 if self.verbose:
-                    print(f"  - Converted to LBA: {lba}")
-
-                # Read from disk image
-                disk_offset = lba * 512
-                bytes_to_read = al * 512
-
-                if disk_offset + bytes_to_read <= len(self.disk_image):
-                    data = self.disk_image[disk_offset:disk_offset + bytes_to_read]
-                    self.mem_write(buffer_addr, data)
-
+                    print(f"  ⚠ Read beyond disk image!")
+                ret_ah = 0x04  # Sector not found
+                ret_al = 0x00
+                error = True
+            else:
+                for i in range(sectors_to_read):
+                    sector_data = self.sector_read(lba + i)
                     if self.verbose:
                         print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
-                        print(f"  - Data (32 bytes): {data[:32].hex(' ')}")
-
-                    # Clear CF to indicate success, set AL to sectors read
-                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                    uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
-                    uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF00) | al)
-                else:
-                    if self.verbose:
-                        print(f"  ⚠ Read beyond disk image!")
-                    # Set CF to indicate error
-                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                    uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                    uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0400)  # AH=04 (sector not found)
-
-            except Exception as e:
-                if self.verbose:
-                    print(f"  ⚠ Error reading disk: {e}")
-                # Set CF to indicate error
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0100)  # AH=01 (error)
+                        print(f"  - Data (32 bytes): {sector_data[:32].hex(' ')}")
+                    self.mem_write(buffer_addr + i * 512, sector_data)
+                ret_ah = 0x00
+                ret_al = sectors_to_read  # Sectors actually read
 
         elif ah == 0x03:
             # Write sectors (CHS addressing)
-            if dl != self.drive_number:
-                # Drive doesn't exist - return error
-                if self.verbose:
-                    print(f"[INT 0x13] Write sectors for drive 0x{dl:02X} - drive not found")
-                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
-                return
-            al = uc.reg_read(UC_X86_REG_AX) & 0xFF  # Number of sectors
-            ch = (uc.reg_read(UC_X86_REG_CX) >> 8) & 0xFF  # Cylinder (low 8 bits)
-            cl = uc.reg_read(UC_X86_REG_CX) & 0xFF  # Sector (bits 0-5) | Cylinder high (bits 6-7)
-            dh = (uc.reg_read(UC_X86_REG_DX) >> 8) & 0xFF  # Head
-
-            # Parse CHS values
-            cylinder = ch | ((cl & 0xC0) << 2)  # Cylinder is 10 bits
-            sector = cl & 0x3F  # Sector is bits 0-5 (1-based)
+            cylinder = ch | ((cl & 0xC0) << 2)
+            sector = cl & 0x3F
             head = dh
-
-            # Buffer address from ES:BX
-            es = uc.reg_read(UC_X86_REG_ES)
-            bx = uc.reg_read(UC_X86_REG_BX)
+            sectors_to_write = al
             buffer_addr = (es << 4) + bx
 
             if self.verbose:
                 print(f"[INT 0x13] Write sectors (CHS) for drive 0x{dl:02X}")
-                print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={al}")
+                print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={sectors_to_write}")
                 print(f"  - Buffer: 0x{es:04X}:0x{bx:04X} (0x{buffer_addr:05X})")
 
-            try:
-                # Convert CHS to LBA: LBA = (C * heads + H) * sectors_per_track + (S - 1)
-                lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
+            lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
+
+            if self.verbose:
+                print(f"  - Converted to LBA: {lba}")
+
+            disk_offset = lba * 512
+            bytes_to_write = sectors_to_write * 512
+
+            if disk_offset + bytes_to_write <= self.disk_size:
+                data = uc.mem_read(buffer_addr, bytes_to_write)
+                for i in range(sectors_to_write):
+                    sector_data = data[i*512:(i+1)*512]
+                    if self.verbose:
+                        print(f"    - Writing sector {i+1}/{sectors_to_write} to LBA {lba + i}")
+                    self.sector_write(lba + i, sector_data)
 
                 if self.verbose:
-                    print(f"  - Converted to LBA: {lba}")
+                    print(f"  ✓ Wrote {bytes_to_write} bytes to LBA {lba} from 0x{buffer_addr:05X}")
+                    print(f"  - Data (32 bytes): {bytes(data[:32]).hex(' ')}")
 
-                # Write to disk image
-                disk_offset = lba * 512
-                bytes_to_write = al * 512
-
-                if disk_offset + bytes_to_write <= len(self.disk_image):
-                    # Read data from memory
-                    data = uc.mem_read(buffer_addr, bytes_to_write)
-
-                    # Write to disk image
-                    self.disk_image[disk_offset:disk_offset + bytes_to_write] = data
-
-                    if self.verbose:
-                        print(f"  ✓ Wrote {bytes_to_write} bytes to LBA {lba} from 0x{buffer_addr:05X}")
-                        print(f"  - Data (32 bytes): {bytes(data[:32]).hex(' ')}")
-
-                    # Clear CF to indicate success, set AL to sectors written
-                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                    uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
-                    uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0xFF00) | al)
-                else:
-                    if self.verbose:
-                        print(f"  ⚠ Write beyond disk image!")
-                    # Set CF to indicate error
-                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                    uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                    uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0400)  # AH=04 (sector not found)
-
-            except Exception as e:
+                ret_ah = 0x00
+                ret_al = sectors_to_write  # Sectors actually written
+            else:
                 if self.verbose:
-                    print(f"  ⚠ Error writing disk: {e}")
-                # Set CF to indicate error
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0300)  # AH=03 (write fault)
+                    print(f"  ⚠ Write beyond disk image!")
+                ret_ah = 0x04  # Sector not found
+                ret_al = 0x00
+                error = True
+
+        elif ah == 0x04:
+            # Verify sectors (CHS addressing)
+            cylinder = ch | ((cl & 0xC0) << 2)
+            sector = cl & 0x3F
+            head = dh
+            sectors_to_verify = al
+
+            if self.verbose:
+                print(f"[INT 0x13] Verify sectors (CHS) for drive 0x{dl:02X}")
+                print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={sectors_to_verify}")
+
+            lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
+            disk_offset = lba * 512
+            bytes_to_verify = sectors_to_verify * 512
+
+            if disk_offset + bytes_to_verify <= self.disk_size:
+                ret_ah = 0x00
+                ret_al = sectors_to_verify  # Sectors verified
+            else:
+                ret_ah = 0x04  # Sector not found
+                ret_al = 0x00
+                error = True
 
         elif ah == 0x08:
-            # Get drive parameters
-            if dl != self.drive_number:
-                # Drive doesn't exist - return error
-                if self.verbose:
-                    print(f"[INT 0x13] Get drive parameters for drive 0x{dl:02X} - drive not found")
-                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
-                return
+            # Get drive parameters - WRITES CX/DX
             if self.verbose:
                 print(f"[INT 0x13] Get drive parameters for drive 0x{dl:02X}")
 
-            # Return detected geometry
-            # CX = sectors per track (bits 0-5) | cylinder high bits (bits 6-7) | cylinder low (bits 8-15)
-            # DH = max head number (heads - 1, 0-indexed)
-            # DL = number of drives
+            if dl < 0x80:  # Floppy
+                ret_ah = 0x01  # Invalid parameter for now
+                error = True
+            else:
+                max_cylinder = self.cylinders - 1
+                max_head = self.heads - 1
+                sectors = self.sectors_per_track
 
-            max_cylinder = self.cylinders - 1
-            max_head = self.heads - 1
-            sectors = self.sectors_per_track
+                # Build CX register: sectors in low 6 bits, cylinder in upper 10 bits
+                cx_value = sectors | ((max_cylinder & 0x300) >> 2) | ((max_cylinder & 0xFF) << 8)
+                dx_value = 1 | (max_head << 8)  # DL = number of drives, DH = max head
 
-            # Build CX register: sectors in low 6 bits, cylinder in upper 10 bits
-            cx = sectors | ((max_cylinder & 0x300) >> 2) | ((max_cylinder & 0xFF) << 8)
-            uc.reg_write(UC_X86_REG_CX, cx)
-            uc.reg_write(UC_X86_REG_DX, (dl & 0xFF) | ((max_head & 0xFF) << 8))
+                uc.reg_write(UC_X86_REG_CX, cx_value)
+                uc.reg_write(UC_X86_REG_DX, dx_value)
+
+                ret_ah = 0x00
+
+                if self.verbose:
+                    print(f"  - Returning geometry: C={self.cylinders}, H={self.heads}, S={self.sectors_per_track}")
+                    print(f"  - CX=0x{cx_value:04X}, DX=0x{dx_value:04X}")
+
+        elif ah == 0x0C:
+            # Seek to track (CHS addressing)
+            cylinder = ch | ((cl & 0xC0) << 2)
+            head = dh
 
             if self.verbose:
-                print(f"  - Returning geometry: C={self.cylinders}, H={self.heads}, S={self.sectors_per_track}")
-                print(f"  - CX=0x{cx:04X}, DH=0x{max_head:02X}")
+                print(f"[INT 0x13] Seek to track for drive 0x{dl:02X}")
+                print(f"  - Cylinder={cylinder}, Head={head}")
 
-            # Clear CF to indicate success
-            flags = uc.reg_read(UC_X86_REG_EFLAGS)
-            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+            if cylinder < self.cylinders and head < self.heads:
+                ret_ah = 0x00
+            else:
+                ret_ah = 0x40  # Seek failure
+                error = True
+
+        elif ah == 0x0D:
+            # Reset hard disk controller
+            if self.verbose:
+                print(f"[INT 0x13] Reset hard disk controller for drive 0x{dl:02X}")
+            ret_ah = 0x00
+
+        elif ah == 0x15:
+            # Get disk type - WRITES CX/DX for fixed disks
+            if self.verbose:
+                print(f"[INT 0x13] Get disk type for drive 0x{dl:02X}")
+
+            if dl < 0x80:
+                ret_ah = 0x00  # No disk or unsupported
+                error = True
+            else:
+                ret_ah = 0x03  # Fixed disk installed
+                # For AH=0x03, return disk size in CX:DX
+                total_sectors = self.disk_size // 512
+                uc.reg_write(UC_X86_REG_CX, (total_sectors >> 16) & 0xFFFF)
+                uc.reg_write(UC_X86_REG_DX, total_sectors & 0xFFFF)
+
+        elif ah == 0x41:
+            # Check INT 13 extensions present - WRITES BX/CX
+            if self.verbose:
+                print(f"[INT 0x13] Check extensions present for drive 0x{dl:02X}")
+
+            if bx == 0x55AA:
+                ret_ah = 0x30  # Version 3.0
+                uc.reg_write(UC_X86_REG_BX, 0xAA55)  # Reversed signature
+                uc.reg_write(UC_X86_REG_CX, 0x0007)  # Support bits
+            else:
+                ret_ah = 0x01  # Invalid function
+                error = True
 
         elif ah == 0x42:
             # Extended read - LBA
             if self.verbose:
                 print(f"[INT 0x13] Extended read for drive 0x{dl:02X}")
 
-            # Read Disk Address Packet from DS:SI
-            si = uc.reg_read(UC_X86_REG_SI)
-            ds = uc.reg_read(UC_X86_REG_DS)
             packet_addr = (ds << 4) + si
+            packet = uc.mem_read(packet_addr, 16)
 
-            try:
-                packet = uc.mem_read(packet_addr, 16)
+            size = packet[0]
+            sectors = struct.unpack('<H', packet[2:4])[0]
+            offset = struct.unpack('<H', packet[4:6])[0]
+            segment = struct.unpack('<H', packet[6:8])[0]
+            lba = struct.unpack('<Q', packet[8:16])[0]
 
-                # Parse packet
-                size = packet[0]
-                sectors = struct.unpack('<H', packet[2:4])[0]
-                offset = struct.unpack('<H', packet[4:6])[0]
-                segment = struct.unpack('<H', packet[6:8])[0]
-                lba = struct.unpack('<Q', packet[8:16])[0]
-
-                if self.verbose:
-                    print(f"  - LBA: {lba}, Sectors: {sectors}, Buffer: 0x{segment:04X}:0x{offset:04X}")
-
-                # Calculate source and destination
-                disk_offset = lba * 512
-                buffer_addr = (segment << 4) + offset
-                bytes_to_read = sectors * 512
-
-                # Read from disk image
-                if disk_offset + bytes_to_read <= len(self.disk_image):
-                    data = self.disk_image[disk_offset:disk_offset + bytes_to_read]
-                    self.mem_write(buffer_addr, data)
-
-                    if self.verbose:
-                        print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
-
-                    # Clear CF to indicate success
-                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                    uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
-                else:
-                    if self.verbose:
-                        print(f"  ⚠ Read beyond disk image!")
-                    # Set CF to indicate error
-                    flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                    uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-
-            except Exception as e:
-                if self.verbose:
-                    print(f"  ⚠ Error reading disk: {e}")
-                # Set CF to indicate error
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-        elif ah == 0x15:
-            # Get disk type
-            if dl != self.drive_number:
-                # Drive doesn't exist - return error
-                if self.verbose:
-                    print(f"[INT 0x13] Get disk type for drive 0x{dl:02X} - drive not found")
-                uc.reg_write(UC_X86_REG_AX, 0x0100)  # AH=0x01 (invalid parameter)
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF
-                return
             if self.verbose:
-                print(f"[INT 0x13] Get disk type for drive 0x{dl:02X}")
-            # AH=03 means fixed disk installed
-            uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0300)
-            flags = uc.reg_read(UC_X86_REG_EFLAGS)
-            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+                print(f"  - LBA: {lba}, Sectors: {sectors}, Buffer: 0x{segment:04X}:0x{offset:04X}")
 
-        elif ah == 0x41:
-            # Check INT 13 extensions present
-            if self.verbose:
-                print(f"[INT 0x13] Check extensions present for drive 0x{dl:02X}")
-            # BX should contain 0x55AA to indicate support
-            bx = uc.reg_read(UC_X86_REG_BX)
-            if bx == 0x55AA:
-                # Extensions present: return AH=0x30 (v3.0)
-                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x3000)
-                # BX = AA55h (reversed signature to confirm support)
-                uc.reg_write(UC_X86_REG_BX, 0xAA55)
-                # CX = capabilities
-                uc.reg_write(UC_X86_REG_CX, 0x0003)  # Bits 0 and 1 set (basic support)
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+            disk_offset = lba * 512
+            buffer_addr = (segment << 4) + offset
+            bytes_to_read = sectors * 512
+
+            if disk_offset + bytes_to_read > self.disk_size:
+                if self.verbose:
+                    print(f"  ⚠ Read beyond disk image!")
+                ret_ah = 0x01  # Invalid command
+                error = True
             else:
-                # Extension not supported
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+                for i in range(sectors):
+                    sector_data = self.sector_read(lba + i)
+                    if self.verbose:
+                        print(f"  ✓ Read sector {i+1}/{sectors} from LBA {lba + i} to 0x{buffer_addr + i*512:05X}")
+                        print(f"    - Data (32 bytes): {sector_data[:32].hex(' ')}")
+                    self.mem_write(buffer_addr + i * 512, sector_data)
+                ret_ah = 0x00
 
         elif ah == 0x48:
             # Get extended drive parameters
             if self.verbose:
                 print(f"[INT 0x13] Get extended drive parameters for drive 0x{dl:02X}")
 
-            # Read the buffer from DS:SI
-            si = uc.reg_read(UC_X86_REG_SI)
-            ds = uc.reg_read(UC_X86_REG_DS)
             buffer_addr = (ds << 4) + si
+            buffer_header = uc.mem_read(buffer_addr, 2)
+            buffer_size = struct.unpack('<H', buffer_header)[0]
 
-            try:
-                # Read the first 2 bytes to get buffer size
-                buffer_header = uc.mem_read(buffer_addr, 2)
-                buffer_size = struct.unpack('<H', buffer_header)[0]
+            if self.verbose:
+                print(f"  - Buffer size requested: {buffer_size} bytes")
 
-                if self.verbose:
-                    print(f"  - Buffer size requested: {buffer_size} bytes")
+            total_sectors = self.disk_size // 512
 
-                # EDD 3.0 Drive Parameters structure (minimum 26 bytes, can be up to 74)
-                # We'll return version 1.x structure (26 bytes)
-                total_sectors = len(self.disk_image) // 512
+            params = bytearray(26)
+            struct.pack_into('<H', params, 0, 26)
+            struct.pack_into('<H', params, 2, 0x0002)
+            struct.pack_into('<I', params, 4, self.cylinders)
+            struct.pack_into('<I', params, 8, self.heads)
+            struct.pack_into('<I', params, 12, self.sectors_per_track)
+            struct.pack_into('<Q', params, 16, total_sectors)
+            struct.pack_into('<H', params, 24, 512)
 
-                # Build the structure
-                params = bytearray(26)
-                struct.pack_into('<H', params, 0, 26)  # Size of buffer (26 bytes)
-                struct.pack_into('<H', params, 2, 0x0002)  # Information flags (bit 1: removable)
-                struct.pack_into('<I', params, 4, self.cylinders)  # Physical cylinders
-                struct.pack_into('<I', params, 8, self.heads)  # Physical heads
-                struct.pack_into('<I', params, 12, self.sectors_per_track)  # Physical sectors per track
-                struct.pack_into('<Q', params, 16, total_sectors)  # Total sectors (64-bit)
-                struct.pack_into('<H', params, 24, 512)  # Bytes per sector
+            bytes_to_write = min(buffer_size, 26)
+            uc.mem_write(buffer_addr, bytes(params[:bytes_to_write]))
 
-                # Write only as many bytes as the caller's buffer can hold
-                bytes_to_write = min(buffer_size, 26)
-                uc.mem_write(buffer_addr, bytes(params[:bytes_to_write]))
+            if self.verbose:
+                print(f"  - Returned {bytes_to_write} bytes")
+                print(f"  - Total sectors: {total_sectors}")
 
-                if self.verbose:
-                    print(f"  - Returned {bytes_to_write} bytes")
-                    print(f"  - Geometry: C={self.cylinders}, H={self.heads}, S={self.sectors_per_track}")
-                    print(f"  - Total sectors: {total_sectors}")
-
-                # Clear CF to indicate success
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
-                # AH = 0 (success)
-                uc.reg_write(UC_X86_REG_AX, uc.reg_read(UC_X86_REG_AX) & 0x00FF)
-
-            except Exception as e:
-                if self.verbose:
-                    print(f"  ⚠ Error: {e}")
-                # Set CF to indicate error
-                flags = uc.reg_read(UC_X86_REG_EFLAGS)
-                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
-                # AH = 01h (invalid function)
-                uc.reg_write(UC_X86_REG_AX, (uc.reg_read(UC_X86_REG_AX) & 0x00FF) | 0x0100)
+            ret_ah = 0x00
 
         else:
             if self.verbose:
                 print(f"[INT 0x13] Unhandled function AH=0x{ah:02X}")
             uc.emu_stop()
+            return
+
+        # Write AH/AL at the end (always needed)
+        uc.reg_write(UC_X86_REG_AX, (ret_ah << 8) | ret_al)
+
+        # Set or clear carry flag
+        if error:
+            uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)
+        else:
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
 
     def handle_int11(self, uc: Uc):
         """Handle INT 0x11 - Get Equipment List"""
