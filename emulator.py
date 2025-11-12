@@ -325,6 +325,7 @@ class BootloaderEmulator:
 
         # Execution tracking
         self.instruction_count = 0
+        self.uninitialized_count = 0
         self.trace_output = None
         self.last_exception = None
         self.screen_output = ""
@@ -757,11 +758,9 @@ class BootloaderEmulator:
         name = self.cs.reg_name(reg_id)
         if name is None:
             return None
-        # HACK: capstone returns "esp" in 16-bit mode
-        if name == "esp":
-            return "sp"
-        elif name == "eip":
-            return "ip"
+        # HACK: capstone returns 32-bit registers in 16-bit mode sometimes
+        if name in ["eax", "ebx", "ecx", "edx", "ebp", "esp", "esi", "edi", "eip"]:
+            name = name[1:]  # Remove 'e' prefix
         return name
 
     def compute_memory_address(self, instr):
@@ -816,11 +815,19 @@ class BootloaderEmulator:
 
             # Disassemble instruction
             try:
-                instr = next(Cs.disasm(self.cs, code, address, 1))
+                instr = next(Cs.disasm(self.cs, code, ip, 1))
                 code = code[:instr.size]
-                
             except StopIteration:
                 instr = None  # Unsupported instruction
+
+            if code == b"\x00\x00": # possibly uninitialized memory
+                self.uninitialized_count += 1
+            else:
+                self.uninitialized_count = 0
+
+            if self.uninitialized_count >= 5:
+                print(f"\n[*] Detected possible uninitialized memory usage (5 consecutive 0000 instructions)")
+                uc.emu_stop()
 
             # Build trace line: address|instruction|registers
             line = f"{cs:04x}:{ip:04x}={address: 6x}|{code.hex().ljust(10)}|"
@@ -914,9 +921,29 @@ class BootloaderEmulator:
             traceback.print_exc()
             uc.emu_stop()
 
+    def _dump_registers(self, uc: Uc, intno: int, label: str):
+        """Dump register state for debugging"""
+        ax = uc.reg_read(UC_X86_REG_AX)
+        bx = uc.reg_read(UC_X86_REG_BX)
+        cx = uc.reg_read(UC_X86_REG_CX)
+        dx = uc.reg_read(UC_X86_REG_DX)
+        si = uc.reg_read(UC_X86_REG_SI)
+        di = uc.reg_read(UC_X86_REG_DI)
+        bp = uc.reg_read(UC_X86_REG_BP)
+        sp = uc.reg_read(UC_X86_REG_SP)
+        cs = uc.reg_read(UC_X86_REG_CS)
+        ds = uc.reg_read(UC_X86_REG_DS)
+        es = uc.reg_read(UC_X86_REG_ES)
+        ss = uc.reg_read(UC_X86_REG_SS)
+        flags = uc.reg_read(UC_X86_REG_EFLAGS)
+        cf = (flags >> 0) & 1
+        zf = (flags >> 6) & 1
+        print(f"[DEBUG] INT 0x{intno:02X} {label}: ax={ax:04x} bx={bx:04x} cx={cx:04x} dx={dx:04x} si={si:04x} di={di:04x} bp={bp:04x} sp={sp:04x} cs={cs:04x} ds={ds:04x} ss={ss:04x} es={es:04x} flags={flags:04x} cf={cf} zf={zf}")
+
     def handle_bios_interrupt(self, uc: Uc, intno: int):
         """Route interrupt to appropriate BIOS service handler"""
         print(f"[*] Handling BIOS interrupt 0x{intno:02X} -> {IVT_NAMES.get(intno, 'Unknown')}")
+        self._dump_registers(uc, intno, "BEFORE")
         if intno == 0x10:
             # Video Services
             self.handle_int10(uc)
@@ -950,6 +977,8 @@ class BootloaderEmulator:
             if self.verbose:
                 print(f"[INT] Unhandled BIOS interrupt 0x{intno:02X} at 0x{ip:04X}")
             uc.emu_stop()
+
+        self._dump_registers(uc, intno, "AFTER")
 
     def hook_interrupt(self, uc: Uc, intno, user_data):
         """Hook called before INT instruction executes"""
