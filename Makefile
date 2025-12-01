@@ -73,26 +73,11 @@ oemboot801.bin: oemboot801.asm
 oemboot93.bin: oemboot93.asm
 	nasm -f bin oemboot93.asm -o oemboot93.bin
 
-oemd4f12.bin: oemd4f12.asm
-	nasm -f bin oemd4f12.asm -o oemd4f12.bin
-
-oemd7f12.bin: oemd7f12.asm
-	nasm -f bin oemd7f12.asm -o oemd7f12.bin
-
-oemd4f16.bin: oemd4f16.asm
-	nasm -f bin oemd4f16.asm -o oemd4f16.bin
-
-oemd7f16.bin: oemd7f16.asm
-	nasm -f bin oemd7f16.asm -o oemd7f16.bin
-
-oemtest.bin: oemtest.asm
-	nasm -f bin oemtest.asm -o oemtest.bin
+test.bin: test.nasm
+	nasm -f bin test.nasm -o test.bin
 
 boot.bin: boot.asm
 	nasm -f bin boot.asm -o boot.bin
-
-bootMS.bin: bootMS.asm
-	nasm -f bin bootMS.asm -o bootMS.bin
 
 msdos.bin: msdos.nasm
 	nasm -f bin msdos.nasm -o msdos.bin
