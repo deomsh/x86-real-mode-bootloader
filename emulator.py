@@ -1185,7 +1185,7 @@ class BootloaderEmulator:
         error = False  # Clear carry by default (success)
 
         # Validate drive number for most operations
-        if ah not in [0x00, 0x08, 0x15, 0x41, 0x48] and dl != self.drive_number:
+        if ah not in [0x00, 0x08, 0x15, 0x41, 0x42, 0x48] and dl != self.drive_number:
             if self.verbose:
                 print(f"[INT 0x13] Function AH=0x{ah:02X} for drive 0x{dl:02X} - drive not found")
             ret_ah = 0x80  # Drive not ready/timeout
