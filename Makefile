@@ -51,3 +51,7 @@ dostest.img: boot
 	dd if=/dev/zero of=$@ bs=20M count=1
 	mformat -i $@ -B boot ::
 	mcopy -i $@ -s ./dos622/* ::
+
+test.bin: test.nasm
+	nasm -f bin test.nasm -o test.bin
+
