@@ -14,13 +14,48 @@ from ctypes import c_uint8, c_uint16, c_uint32
 import re
 from pathlib import Path
 from collections import OrderedDict
-from typing import Optional, Tuple, Annotated, get_args, get_origin, Protocol
+from typing import Optional, Tuple, Annotated, get_args, get_origin, Protocol, Any, List
 
 from unicorn import * # type: ignore
 from unicorn.x86_const import * # type: ignore
 
 from capstone import * # type: ignore
 from capstone.x86_const import * # type: ignore
+
+# =============================================================================
+# Field Marker System for BDA Policies
+# =============================================================================
+
+class FieldMarker:
+    """Base class for annotation markers"""
+    pass
+
+class BDAPolicy:
+    """BDA write policy enum"""
+    PASSIVE = 0      # Allow writes, just log them
+    BIOS_OWNED = 1   # Writes trigger hardware sync (not yet implemented)
+    DENY = 2         # Block writes and halt emulation
+
+class BDAPolicyMarker(FieldMarker):
+    """Marker that indicates the BDA write policy for a field"""
+    def __init__(self, policy: int):
+        self.policy = policy
+
+def bios_owned() -> BDAPolicyMarker:
+    """Mark a field as BIOS-owned (writes trigger hardware sync)"""
+    return BDAPolicyMarker(BDAPolicy.BIOS_OWNED)
+
+def passive() -> BDAPolicyMarker:
+    """Mark a field as passive (writes are allowed, just logged)"""
+    return BDAPolicyMarker(BDAPolicy.PASSIVE)
+
+def deny() -> BDAPolicyMarker:
+    """Mark a field as denied (writes are blocked and halt emulation)"""
+    return BDAPolicyMarker(BDAPolicy.DENY)
+
+# =============================================================================
+# Type Hints
+# =============================================================================
 
 class c_array(Protocol):
     """Type hint for ctypes arrays"""
@@ -31,10 +66,14 @@ class c_array(Protocol):
 
 class _CStructMeta(type(ctypes.LittleEndianStructure)):
     """Metaclass for ctypes structures with annotation support and comment extraction"""
+
     def __new__(mcs, name, bases, namespace):
         if "__annotations__" in namespace:
             fields = []
             comments = {}
+            field_annotations = {}  # field_name -> [extra args from Annotated]
+            field_offsets = {}      # field_name -> (offset, size)
+            current_offset = 0
 
             # Build fields from annotations
             for field_name, annotation in namespace["__annotations__"].items():
@@ -42,11 +81,22 @@ class _CStructMeta(type(ctypes.LittleEndianStructure)):
                 origin = get_origin(annotation)
                 if origin is Annotated:
                     args = get_args(annotation)
-                    # First arg is the display type, second is the actual ctypes type
-                    ctypes_type = args[1]
+                    ctypes_type = args[1]  # The actual ctypes type
+                    extra_args = list(args[2:]) if len(args) > 2 else []  # Everything after the ctype
+
+                    field_size = ctypes.sizeof(ctypes_type)
                     fields.append((field_name, ctypes_type))
+
+                    if extra_args:
+                        field_annotations[field_name] = extra_args
+
+                    field_offsets[field_name] = (current_offset, field_size)
+                    current_offset += field_size
                 else:
+                    field_size = ctypes.sizeof(annotation)
                     fields.append((field_name, annotation))
+                    field_offsets[field_name] = (current_offset, field_size)
+                    current_offset += field_size
 
             # Extract comments from source code
             try:
@@ -66,6 +116,9 @@ class _CStructMeta(type(ctypes.LittleEndianStructure)):
 
             namespace["_fields_"] = fields
             namespace["_field_comments"] = comments
+            namespace["_field_annotations"] = field_annotations
+            namespace["_field_offsets"] = field_offsets
+
         return super().__new__(mcs, name, bases, namespace)
 
 class c_struct(ctypes.LittleEndianStructure, metaclass=_CStructMeta):
@@ -75,14 +128,31 @@ class c_struct(ctypes.LittleEndianStructure, metaclass=_CStructMeta):
     @classmethod
     def get_field_at_offset(cls, offset: int) -> Optional[Tuple[str, str, int]]:
         """Find field at given offset within structure."""
-        current_offset = 0
-        for field_name, field_type in cls._fields_: # type: ignore
-            field_size = ctypes.sizeof(field_type)
-            if current_offset <= offset < current_offset + field_size:
+        for field_name, (field_offset, field_size) in cls._field_offsets.items():  # type: ignore
+            if field_offset <= offset < field_offset + field_size:
                 comment = getattr(cls, '_field_comments', {}).get(field_name, "")
                 return (field_name, comment, field_size)
-            current_offset += field_size
         return None
+
+    @classmethod
+    def get_field_markers(cls, field_name: str, marker_type: type) -> List[Any]:
+        """Get all markers of a specific type for a field."""
+        annotations = getattr(cls, '_field_annotations', {}).get(field_name, [])
+        return [a for a in annotations if isinstance(a, marker_type)]
+
+    @classmethod
+    def get_field_marker(cls, field_name: str, marker_type: type) -> Optional[Any]:
+        """Get first marker of a specific type for a field, or None."""
+        markers = cls.get_field_markers(field_name, marker_type)
+        return markers[0] if markers else None
+
+    @classmethod
+    def get_markers_at_offset(cls, offset: int, marker_type: type) -> List[Any]:
+        """Get all markers of a specific type at a byte offset."""
+        field_info = cls.get_field_at_offset(offset)
+        if field_info:
+            return cls.get_field_markers(field_info[0], marker_type)
+        return []
 
 
 class BIOSDataArea(c_struct):
@@ -100,29 +170,29 @@ class BIOSDataArea(c_struct):
     memory_size_kb: Annotated[int, c_uint16]              # 0x013: Memory size in KB
     _pad1: Annotated[int, c_uint8]                        # 0x015: Padding/unused
     ps2_ctrl_flags: Annotated[int, c_uint8]               # 0x016: PS/2 controller flags
-    keyboard_flags: Annotated[int, c_uint16]              # 0x017: Keyboard status flags (combined)
+    keyboard_flags: Annotated[int, c_uint16, bios_owned()] # 0x017: Keyboard status flags (combined)
     alt_keypad_entry: Annotated[int, c_uint8]             # 0x019: Alt-keypad numeric entry
-    kbd_buffer_head: Annotated[int, c_uint16]             # 0x01A: Keyboard buffer head pointer
-    kbd_buffer_tail: Annotated[int, c_uint16]             # 0x01C: Keyboard buffer tail pointer
-    kbd_buffer: Annotated[c_array, c_uint8 * 32]          # 0x01E: Keyboard circular buffer
+    kbd_buffer_head: Annotated[int, c_uint16, bios_owned()] # 0x01A: Keyboard buffer head pointer
+    kbd_buffer_tail: Annotated[int, c_uint16, bios_owned()] # 0x01C: Keyboard buffer tail pointer
+    kbd_buffer: Annotated[c_array, c_uint8 * 32, bios_owned()] # 0x01E: Keyboard circular buffer
     diskette_calib_status: Annotated[int, c_uint8]        # 0x03E: Floppy drive calibration status
     diskette_motor_status: Annotated[int, c_uint8]        # 0x03F: Floppy motor status
     diskette_motor_timeout: Annotated[int, c_uint8]       # 0x040: Floppy motor shutoff counter
     diskette_last_status: Annotated[int, c_uint8]         # 0x041: Last floppy operation status
     diskette_controller: Annotated[c_array, c_uint8 * 7]  # 0x042: Floppy controller status bytes
-    video_mode: Annotated[int, c_uint8]                   # 0x049: Current video mode
-    video_columns: Annotated[int, c_uint16]               # 0x04A: Number of text columns
+    video_mode: Annotated[int, c_uint8, bios_owned()]     # 0x049: Current video mode
+    video_columns: Annotated[int, c_uint16, bios_owned()]  # 0x04A: Number of text columns
     video_page_size: Annotated[int, c_uint16]             # 0x04C: Video page size in bytes
     video_page_offset: Annotated[int, c_uint16]           # 0x04E: Current page offset in video RAM
-    cursor_pos: Annotated[c_array, c_uint16 * 8]          # 0x050: Cursor position for 8 pages (row<<8|col)
-    cursor_shape: Annotated[int, c_uint16]                # 0x060: Cursor shape (start_line<<8|end_line)
-    active_page: Annotated[int, c_uint8]                  # 0x062: Active display page number
+    cursor_pos: Annotated[c_array, c_uint16 * 8, bios_owned()] # 0x050: Cursor position for 8 pages (row<<8|col)
+    cursor_shape: Annotated[int, c_uint16, bios_owned()]  # 0x060: Cursor shape (start_line<<8|end_line)
+    active_page: Annotated[int, c_uint8, bios_owned()]    # 0x062: Active display page number
     video_port: Annotated[int, c_uint16]                  # 0x063: Video controller I/O port base (3B4h/3D4h)
     video_mode_reg: Annotated[int, c_uint8]               # 0x065: Current video mode register setting
     video_palette: Annotated[int, c_uint8]                # 0x066: Current color palette setting
     cassette_data: Annotated[c_array, c_uint8 * 5]        # 0x067: Cassette tape data (obsolete)
-    timer_counter: Annotated[int, c_uint32]               # 0x06C: Timer ticks since midnight
-    timer_overflow: Annotated[int, c_uint8]               # 0x070: Timer 24-hour rollover flag
+    timer_counter: Annotated[int, c_uint32, bios_owned()] # 0x06C: Timer ticks since midnight
+    timer_overflow: Annotated[int, c_uint8, bios_owned()] # 0x070: Timer 24-hour rollover flag
     break_flag: Annotated[int, c_uint8]                   # 0x071: Ctrl+Break flag
     reset_flag: Annotated[int, c_uint16]                  # 0x072: Soft reset flag (0x1234=warm boot)
     hard_disk_status: Annotated[int, c_uint8]             # 0x074: Last hard disk operation status
@@ -162,6 +232,14 @@ class BIOSDataArea(c_struct):
     _reserved1: Annotated[c_array, c_uint8 * 7]           # 0x0A1: Reserved
     video_save_ptr_table: Annotated[int, c_uint32]        # 0x0A8: Pointer to video save pointer table (seg:off)
     _reserved2: Annotated[c_array, c_uint8 * (256 - 0xAC)] # 0x0AC: Reserved/BIOS-specific area
+
+    @classmethod
+    def get_policy_at_offset(cls, offset: int) -> int:
+        """Get write policy for a byte offset in the BDA."""
+        markers = cls.get_markers_at_offset(offset, BDAPolicyMarker)
+        if markers:
+            return markers[0].policy
+        return BDAPolicy.PASSIVE
 
 
 class DiskParameterTable(c_struct):
@@ -1153,6 +1231,42 @@ class BootloaderEmulator:
             if self.verbose:
                 print(f"  - Returning: mode=0x{video_mode:02X}, columns={video_columns}, page={active_page}")
 
+        elif ah == 0x1A:
+            # Get Display Combination Code
+            al = uc.reg_read(UC_X86_REG_AX) & 0xFF
+            if self.verbose:
+                print(f"[INT 0x10] Get Display Combination Code: AL=0x{al:02X}")
+
+            # Return: AL=0x1A (function supported), BL=display combination code
+            # Display combination code 0x08 = VGA with color display
+            uc.reg_write(UC_X86_REG_AX, 0x1A00)
+            uc.reg_write(UC_X86_REG_BX, (uc.reg_read(UC_X86_REG_BX) & 0xFF00) | 0x08)
+
+            # Clear CF (success)
+            flags = uc.reg_read(UC_X86_REG_EFLAGS)
+            uc.reg_write(UC_X86_REG_EFLAGS, flags & ~0x0001)
+
+            if self.verbose:
+                print(f"  - Returning: AL=0x1A, BL=0x08 (VGA color)")
+
+        elif ah == 0x1B:
+            # Get Functionality/State Information
+            al = uc.reg_read(UC_X86_REG_AX) & 0xFF
+            bx = uc.reg_read(UC_X86_REG_BX) & 0xFF
+            if self.verbose:
+                print(f"[INT 0x10] Get Functionality/State Information: AL=0x{al:02X}, BL=0x{bx:02X}")
+
+            if bx == 0x00:
+                # Return functionality state information
+                # ES:DI = buffer for returning state information
+                # For simplicity, return unsupported
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF (error)
+            else:
+                # Other BL values - return error
+                flags = uc.reg_read(UC_X86_REG_EFLAGS)
+                uc.reg_write(UC_X86_REG_EFLAGS, flags | 0x0001)  # Set CF (error)
+
         else:
             if self.verbose:
                 print(f"[INT 0x10] Unhandled function AH=0x{ah:02X}")
@@ -1217,29 +1331,43 @@ class BootloaderEmulator:
                 print(f"  - CHS: C={cylinder} H={head} S={sector}, Sectors={sectors_to_read}")
                 print(f"  - Buffer: 0x{es:04X}:0x{bx:04X} (0x{buffer_addr:05X})")
 
-            lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
-
-            if self.verbose:
-                print(f"  - Converted to LBA: {lba}")
-
-            disk_offset = lba * 512
-            bytes_to_read = sectors_to_read * 512
-
-            if disk_offset + bytes_to_read > self.disk_size:
+            # Validate CHS values
+            if sector == 0 or sector > self.sectors_per_track:
                 if self.verbose:
-                    print(f"  ⚠ Read beyond disk image!")
+                    print(f"  ⚠ Invalid sector: {sector} (valid: 1-{self.sectors_per_track})")
+                ret_ah = 0x04  # Sector not found
+                ret_al = 0x00
+                error = True
+            elif cylinder >= self.cylinders or head >= self.heads:
+                if self.verbose:
+                    print(f"  ⚠ Invalid CHS: C={cylinder} H={head} (max: {self.cylinders-1}C, {self.heads-1}H)")
                 ret_ah = 0x04  # Sector not found
                 ret_al = 0x00
                 error = True
             else:
-                for i in range(sectors_to_read):
-                    sector_data = self.sector_read(lba + i)
+                lba = (cylinder * self.heads + head) * self.sectors_per_track + (sector - 1)
+
+                if self.verbose:
+                    print(f"  - Converted to LBA: {lba}")
+
+                disk_offset = lba * 512
+                bytes_to_read = sectors_to_read * 512
+
+                if disk_offset + bytes_to_read > self.disk_size:
                     if self.verbose:
-                        print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
-                        print(f"  - Data (32 bytes): {sector_data[:32].hex(' ')}")
-                    self.mem_write(buffer_addr + i * 512, sector_data)
-                ret_ah = 0x00
-                ret_al = sectors_to_read  # Sectors actually read
+                        print(f"  ⚠ Read beyond disk image!")
+                    ret_ah = 0x04  # Sector not found
+                    ret_al = 0x00
+                    error = True
+                else:
+                    for i in range(sectors_to_read):
+                        sector_data = self.sector_read(lba + i)
+                        if self.verbose:
+                            print(f"  ✓ Read {bytes_to_read} bytes from LBA {lba} to 0x{buffer_addr:05X}")
+                            print(f"  - Data (32 bytes): {sector_data[:32].hex(' ')}")
+                        self.mem_write(buffer_addr + i * 512, sector_data)
+                    ret_ah = 0x00
+                    ret_al = sectors_to_read  # Sectors actually read
 
         elif ah == 0x03:
             # Write sectors (CHS addressing)
@@ -1886,6 +2014,23 @@ class BootloaderEmulator:
 
         return True
 
+    def sync_bda_hardware(self, bda_offset: int, value: int, size: int, field_name: str) -> bool:
+        """Sync hardware state when a BIOS_OWNED BDA field is written.
+
+        Returns True if the write was handled, False if emulation should stop.
+        """
+        if field_name == "cursor_pos":
+            # cursor_pos is an array of 8 uint16 values (one per page) at 0x050-0x05F
+            # Format: row << 8 | col
+            page_index = (bda_offset - 0x50) // 2
+            row = (value >> 8) & 0xFF
+            col = value & 0xFF
+            print(f"  -> Hardware sync: cursor_pos[{page_index}] = (row={row}, col={col})")
+            return True
+
+        # Other BIOS_OWNED fields are not implemented
+        return False
+
     def hook_bda_access(self, uc: Uc, access, address, size, value, _user_data):
         """Hook called on BDA region (0x0400-0x04FF) memory access"""
 
@@ -1901,13 +2046,15 @@ class BootloaderEmulator:
         # Use introspection to find field at this offset within BDA
         bda_offset = address - 0x0400  # Offset from start of BDA
         field_info = BIOSDataArea.get_field_at_offset(bda_offset)
+        policy = BIOSDataArea.get_policy_at_offset(bda_offset)
 
         # Format the trace line
         if field_info:
             field_name, field_desc, field_size = field_info
-            line = f"[{access_type}] 0x{address:04X} | size={size} | field={field_name} | desc={field_desc} | value=0x{value:X} | ip=0x{ip:04X}"
+            policy_name = ["PASSIVE", "BIOS_OWNED", "DENY"][policy]
+            line = f"[{access_type}] 0x{address:04X} | size={size} | field={field_name} | desc={field_desc} | value=0x{value:X} | ip=0x{ip:04X} | policy={policy_name}"
         else:
-            line = f"[{access_type}] 0x{address:04X} | size={size} | value=0x{value:X} | ip=0x{ip:04X}"
+            line = f"[{access_type}] 0x{address:04X} | size={size} | value=0x{value:X} | ip=0x{ip:04X} | policy=PASSIVE"
 
         line += "\n"
 
@@ -1919,11 +2066,25 @@ class BootloaderEmulator:
         if self.verbose:
             print(line.strip())
 
-        # Write to BDA is generally not allowed (except during initialization)
+        # Handle writes based on policy
         if access == UC_MEM_WRITE:
-            print(f"\n[!] BDA write protection violation at 0x{address:04X}")
-            uc.emu_stop()
-            return False
+            if policy == BDAPolicy.DENY:
+                old = uc.mem_read(address, size)
+                uc.mem_write(address, bytes(old))
+                if self.verbose:
+                    print(f"  -> DENIED (restored old value)")
+                uc.emu_stop()
+                return False
+            elif policy == BDAPolicy.BIOS_OWNED:
+                field_name = field_info[0] if field_info else "unknown"
+                if not self.sync_bda_hardware(bda_offset, value, size, field_name):
+                    if self.verbose:
+                        print(f"  -> BIOS_OWNED '{field_name}' not implemented, stopping")
+                    uc.emu_stop()
+                    return False
+            elif policy == BDAPolicy.PASSIVE:
+                # Allow write
+                pass
 
         return True
 
